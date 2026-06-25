@@ -89,8 +89,42 @@ def find_token(symbol: str, exchange: str, instrument: str, expiry: str = "", st
     """
     Find AngelOne token + tradingsymbol for a given symbol.
     Returns (token, tradingsymbol) or ("", "").
+    Handles CASH/equity stocks via NSE equity segment.
     """
     try:
+        # ── CASH / EQUITY stocks ──
+        if instrument.upper() == "CASH":
+            ao = get_angel_obj()
+            if not ao: return "", ""
+            # Try symbol + -EQ suffix first (NSE equity format)
+            for ts_try in [f"{symbol.upper()}-EQ", symbol.upper()]:
+                headers = {
+                    "Content-Type":    "application/json",
+                    "Accept":          "application/json",
+                    "X-UserType":      "USER",
+                    "X-SourceID":      "WEB",
+                    "X-ClientLocalIP": "127.0.0.1",
+                    "X-ClientPublicIP":"106.193.147.98",
+                    "X-MACAddress":    "AA:BB:CC:DD:EE:FF",
+                    "X-PrivateKey":    ao.api_key,
+                    "Authorization":   f"Bearer {ao.jwt}",
+                }
+                try:
+                    resp = requests.post(
+                        "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/searchScrip",
+                        json={"exchange": "NSE", "searchscrip": ts_try},
+                        headers=headers, timeout=8
+                    )
+                    data = resp.json()
+                    if data.get("status") and data.get("data"):
+                        for item in data["data"]:
+                            ts = item.get("tradingsymbol","")
+                            if ts.upper() in (f"{symbol.upper()}-EQ", symbol.upper()):
+                                return str(item.get("symboltoken","")), ts
+                except Exception:
+                    pass
+            return "", ""
+
         df = get_instrument_master()
         if df.empty: return "", ""
 
@@ -139,12 +173,18 @@ def find_token(symbol: str, exchange: str, instrument: str, expiry: str = "", st
 
 # ── LTP ────────────────────────────────────────────────────────────────────────
 
-def fetch_current_ltp(symbol: str, exchange: str, token: str) -> tuple:
+def fetch_current_ltp(symbol: str, exchange: str, token: str, instrument_hint: str = "FUT") -> tuple:
     """Fetch LTP via direct REST. Returns (price, 'LIVE') or (None, 'MANUAL')."""
     ao = get_angel_obj()
     if not ao or not token: return None, "MANUAL"
     try:
-        seg = "NFO" if exchange.upper() in ("NSE","NFO") else exchange.upper()
+        # CASH stocks use NSE segment, F&O uses NFO
+        if instrument_hint.upper() == "CASH":
+            seg = "NSE"
+        elif exchange.upper() in ("NSE","NFO"):
+            seg = "NFO"
+        else:
+            seg = exchange.upper()
         headers = {
             "Content-Type":    "application/json",
             "Accept":          "application/json",
