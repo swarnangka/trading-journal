@@ -372,15 +372,23 @@ with col_form:
 
             if not manual and not is_back and instrument != "CASH":
                 try:
-                    from core.angelone import get_ltp
-                    ltp = get_ltp(symbol, exchange, instrument)
-                    if ltp and ltp > 0:
-                        price = ltp; price_source = "ANGELONE_LTP"
-                        st.markdown(f'<div class="success-box">LTP: {fmt_px(ltp)}</div>', unsafe_allow_html=True)
+                    from core.angelone import get_angel_obj, get_symbol_token, fetch_current_ltp
+                    obj = get_angel_obj()
+                    if obj:
+                        token = get_symbol_token(symbol, exchange, instrument)
+                        if token:
+                            ltp, _ = fetch_current_ltp(symbol, exchange, token)
+                            if ltp and ltp > 0:
+                                price = ltp; price_source = "ANGELONE_LTP"
+                                st.markdown(f'<div class="success-box">LTP fetched: {fmt_px(ltp)}</div>', unsafe_allow_html=True)
+                            else:
+                                st.markdown('<div class="warn-box">No price returned — enter manually.</div>', unsafe_allow_html=True)
+                        else:
+                            st.markdown(f'<div class="warn-box">Symbol token not found for {symbol}.</div>', unsafe_allow_html=True)
                     else:
-                        st.markdown('<div class="warn-box">AngelOne returned no price — enter manually.</div>', unsafe_allow_html=True)
+                        st.markdown('<div class="warn-box">AngelOne login failed — enter manually.</div>', unsafe_allow_html=True)
                 except Exception as ex:
-                    st.markdown(f'<div class="warn-box">AngelOne error ({ex}) — enter manually.</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="warn-box">AngelOne error: {ex}</div>', unsafe_allow_html=True)
 
             notes     = st.text_area("Notes", height=56, placeholder="Setup, SL, reason...")
             submitted = st.form_submit_button("LOG TRADE →")
@@ -419,7 +427,7 @@ with col_form:
 
 
 # ══════════════════════════════════════════════════════
-# RIGHT — OPEN TRADES
+# RIGHT — OPEN TRADES (grouped by strategy)
 # ══════════════════════════════════════════════════════
 with col_trades:
     st.markdown('<div class="section-title">Open Trades</div>', unsafe_allow_html=True)
@@ -431,133 +439,211 @@ with col_trades:
     df        = read_trades()
     today_str = now_ist().strftime("%Y-%m-%d")
 
-    if not df.empty:
-        total  = len(df)
-        buys   = len(df[df["action"].astype(str).str.upper()=="BUY"]) if "action" in df.columns else 0
-        todays = len(df[df["trade_date"].astype(str)==today_str]) if "trade_date" in df.columns else 0
-
-        # AngelOne LTP
-        ltp_map = {}
-        try:
-            from core.angelone import get_ltp
-            for _,row in df.iterrows():
-                sym = str(row.get("symbol",""))
-                if sym and sym not in ltp_map:
-                    ltp = get_ltp(sym, str(row.get("exchange","NSE")), str(row.get("instrument","FUT")))
-                    if ltp and ltp > 0: ltp_map[sym] = ltp
-        except: pass
-
-        # Total MTM
-        mtm = 0.0
-        for _,row in df.iterrows():
-            sym = str(row.get("symbol",""))
-            if sym in ltp_map:
-                ep  = float(row.get("price",0) or 0)
-                qty = float(row.get("quantity",0) or 0)
-                act = str(row.get("action","BUY")).upper()
-                mtm += ((ltp_map[sym]-ep)*qty) if act=="BUY" else ((ep-ltp_map[sym])*qty)
-
-        mtm_c = "#22c55e" if mtm>=0 else "#ef4444"
-        mtm_s = ("+" if mtm>=0 else "")+f"₹{abs(mtm):,.0f}" if ltp_map else "—"
-
-        m1,m2,m3,m4 = st.columns(4)
-        m1.markdown(f'<div class="stat-box"><div class="stat-label">Positions</div><div class="stat-value" style="color:#e2e8f0">{total}</div><div class="stat-sub">{buys}L · {total-buys}S</div></div>', unsafe_allow_html=True)
-        m2.markdown(f'<div class="stat-box"><div class="stat-label">MTM P&L</div><div class="stat-value" style="color:{mtm_c}">{mtm_s}</div><div class="stat-sub">{"live" if ltp_map else "add AngelOne creds"}</div></div>', unsafe_allow_html=True)
-        m3.markdown(f'<div class="stat-box"><div class="stat-label">Margin Used</div><div class="stat-value" style="color:#e2e8f0">—</div><div class="stat-sub">SPAN via AngelOne</div></div>', unsafe_allow_html=True)
-        m4.markdown(f'<div class="stat-box"><div class="stat-label">Today</div><div class="stat-value" style="color:#f97316">{todays}</div><div class="stat-sub">trades today</div></div>', unsafe_allow_html=True)
-        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-
     if df.empty:
         st.markdown('<div style="color:#475569;font-size:0.82rem;padding:2rem 0;text-align:center;">No trades logged yet.</div>', unsafe_allow_html=True)
     else:
         if "timestamp_entry" in df.columns:
             df = df.sort_values("timestamp_entry", ascending=False)
 
-        for _,row in df.iterrows():
-            tid   = str(row.get("trade_id",""))
-            sym   = str(row.get("symbol",""))
-            act   = str(row.get("action",""))
-            instr = str(row.get("instrument",""))
-            exp_v = str(row.get("expiry",""))
-            stk_v = str(row.get("strike",""))
-            opt_v = str(row.get("option_type",""))
-            lv    = str(row.get("lots_qty",""))
-            qv    = str(row.get("quantity",""))
-            pv    = row.get("price",0)
-            strat = str(row.get("strategy",""))
-            dt_v  = str(row.get("trade_date",""))
+        # ── FETCH LTP + MARGIN FOR ALL POSITIONS (one batch) ──
+        ltp_map           = {}
+        total_margin_used = 0.0
 
-            desc  = sym
-            if exp_v: desc += f" {exp_v}"
-            if stk_v and stk_v not in ("","0"): desc += f" {stk_v}{opt_v}"
-            new_b = '<span class="badge-new">NEW</span>' if dt_v==today_str else ""
+        try:
+            from core.angelone import get_angel_obj, get_symbol_token, fetch_current_ltp, fetch_margin_for_positions
+            obj = get_angel_obj()
+            if obj:
+                positions_for_margin = []
+                for _, row in df.iterrows():
+                    sym   = str(row.get("symbol",""))
+                    exch  = str(row.get("exchange","NSE"))
+                    instr = str(row.get("instrument","FUT"))
+                    exp_v = str(row.get("expiry",""))
+                    stk_v = float(row.get("strike",0) or 0)
+                    opt_v = str(row.get("option_type",""))
+                    qty   = float(row.get("quantity",0) or 0)
+                    px    = float(row.get("price",0) or 0)
+                    if sym and sym not in ltp_map:
+                        token = get_symbol_token(sym, exch, instr, exp_v, stk_v, opt_v)
+                        ltp, _ = fetch_current_ltp(sym, exch, token)
+                        if ltp and ltp > 0:
+                            ltp_map[sym] = ltp
+                        positions_for_margin.append({
+                            "symbol": sym, "exchange": exch, "instrument": instr,
+                            "token": token, "quantity": qty, "avg_entry_price": px,
+                            "strategy": str(row.get("strategy","")),
+                        })
+                if positions_for_margin:
+                    mdata = fetch_margin_for_positions(positions_for_margin)
+                    total_margin_used = float(mdata.get("_total_required", 0))
+        except Exception:
+            pass
 
-            # Qty using session-cached lot size
-            cur_ls  = get_lot_size(sym)
-            cur_qty = int(lv)*cur_ls if (str(lv).isdigit() and cur_ls>1) else qv
-            qty_info = f"{lv} lots × {cur_ls} = {cur_qty} sh" if instr!="CASH" else f"{qv} shares"
+        # ── TOTAL ALLOCATED CAPITAL ──
+        total_capital = 0
+        try:
+            df_strat = read_strategies()
+            if not df_strat.empty and "allocated_capital" in df_strat.columns:
+                for _, sr in df_strat.iterrows():
+                    try:
+                        cap = str(sr["allocated_capital"]).replace("L","").replace("l","").strip()
+                        cv  = float(cap)
+                        if cv < 10000: cv *= 100000
+                        total_capital += cv
+                    except: pass
+        except: pass
 
-            # Days open
-            try:
-                trade_dt  = datetime.strptime(dt_v, "%Y-%m-%d").date()
-                days_open = (now_ist().date() - trade_dt).days
-                days_str  = f"{days_open}d" if days_open > 0 else "today"
-            except:
-                days_str = "—"
-
-            # Per-trade LTP + MTM
-            ltp_line = ""
+        # ── TOTAL MTM ──
+        total_mtm = 0.0
+        for _, row in df.iterrows():
+            sym = str(row.get("symbol",""))
             if sym in ltp_map:
-                lp = ltp_map[sym]
+                ep  = float(row.get("price",0) or 0)
+                qty = float(row.get("quantity",0) or 0)
+                act = str(row.get("action","BUY")).upper()
+                total_mtm += ((ltp_map[sym]-ep)*qty) if act=="BUY" else ((ep-ltp_map[sym])*qty)
+
+        # ── SUMMARY METRICS ROW ──
+        tm_c = "#22c55e" if total_mtm>=0 else "#ef4444"
+        tm_s = ("+" if total_mtm>=0 else "")+f"₹{abs(total_mtm):,.0f}" if ltp_map else "—"
+        mg_s = f"₹{total_margin_used/100000:.1f}L" if total_margin_used > 0 else "—"
+        mg_p = f"{total_margin_used/total_capital*100:.1f}%" if (total_capital>0 and total_margin_used>0) else ""
+        mg_c = "#22c55e" if (total_margin_used/total_capital < 0.5 if total_capital>0 and total_margin_used>0 else True) else "#eab308"
+        cr_s = f"₹{(total_capital-total_margin_used)/100000:.1f}L" if (total_capital>0 and total_margin_used>0) else "—"
+
+        m1,m2,m3,m4 = st.columns(4)
+        m1.markdown(f'<div class="stat-box"><div class="stat-label">Positions</div><div class="stat-value" style="color:#e2e8f0">{len(df)}</div><div class="stat-sub">{len(df[df["action"].str.upper()=="BUY"])}L · {len(df[df["action"].str.upper()=="SELL"])}S</div></div>', unsafe_allow_html=True)
+        m2.markdown(f'<div class="stat-box"><div class="stat-label">Total MTM</div><div class="stat-value" style="color:{tm_c}">{tm_s}</div><div class="stat-sub">{"live" if ltp_map else "needs AngelOne"}</div></div>', unsafe_allow_html=True)
+        m3.markdown(f'<div class="stat-box"><div class="stat-label">Margin Used</div><div class="stat-value" style="color:{mg_c}">{mg_s} {mg_p}</div><div class="stat-sub">{"of ₹"+str(int(total_capital//100000))+"L capital" if total_capital>0 else "SPAN via AngelOne"}</div></div>', unsafe_allow_html=True)
+        m4.markdown(f'<div class="stat-box"><div class="stat-label">Capital Free</div><div class="stat-value" style="color:#e2e8f0">{cr_s}</div><div class="stat-sub">{"remaining" if cr_s != "—" else "add AngelOne"}</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
+        # ── GROUP BY STRATEGY ──
+        strategies_in_trades = df["strategy"].unique() if "strategy" in df.columns else []
+
+        for strategy_name in strategies_in_trades:
+            strategy_df = df[df["strategy"] == strategy_name].copy()
+
+            # Strategy MTM
+            strat_mtm = 0.0
+            for _, row in strategy_df.iterrows():
+                sym = str(row.get("symbol",""))
+                if sym in ltp_map:
+                    ep  = float(row.get("price",0) or 0)
+                    qty = float(row.get("quantity",0) or 0)
+                    act = str(row.get("action","BUY")).upper()
+                    strat_mtm += ((ltp_map[sym]-ep)*qty) if act=="BUY" else ((ep-ltp_map[sym])*qty)
+
+            strat_mtm_c = "#22c55e" if strat_mtm>=0 else "#ef4444"
+            strat_mtm_s = ("+" if strat_mtm>=0 else "")+f"₹{abs(strat_mtm):,.0f}" if ltp_map else "—"
+            strat_today = len(strategy_df[strategy_df["trade_date"].astype(str)==today_str]) if "trade_date" in strategy_df.columns else 0
+
+            # Strategy header row
+            sc1, sc2, sc3, sc4, sc5 = st.columns([2,1,1,1,1])
+            sc1.markdown(
+                f'<div style="background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.3);'
+                f'border-radius:5px;padding:5px 12px;display:inline-block;font-size:0.75rem;'
+                f'font-weight:700;letter-spacing:0.1em;color:#f97316;text-transform:uppercase;">{strategy_name}</div>',
+                unsafe_allow_html=True
+            )
+            sc2.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Positions</div><div style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">{len(strategy_df)}</div>', unsafe_allow_html=True)
+            sc3.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">MTM P&L</div><div style="font-size:0.9rem;font-weight:600;color:{strat_mtm_c};">{strat_mtm_s}</div>', unsafe_allow_html=True)
+            sc4.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Margin</div><div style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">—</div>', unsafe_allow_html=True)
+            sc5.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Today</div><div style="font-size:0.9rem;font-weight:600;color:#f97316;">{strat_today}</div>', unsafe_allow_html=True)
+
+            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+            # Trade rows under this strategy
+            for _, row in strategy_df.iterrows():
+                tid   = str(row.get("trade_id",""))
+                sym   = str(row.get("symbol",""))
+                act   = str(row.get("action",""))
+                instr = str(row.get("instrument",""))
+                exp_v = str(row.get("expiry",""))
+                stk_v = str(row.get("strike",""))
+                opt_v = str(row.get("option_type",""))
+                lv    = str(row.get("lots_qty",""))
+                qv    = str(row.get("quantity",""))
+                pv    = row.get("price",0)
+                dt_v  = str(row.get("trade_date",""))
+
+                # Descriptor
+                desc  = sym
+                if exp_v: desc += f" {exp_v}"
+                if stk_v and stk_v not in ("","0"): desc += f" {stk_v}{opt_v}"
+                new_b = '<span class="badge-new">NEW</span>' if dt_v==today_str else ""
+
+                # Days open
                 try:
-                    ep   = float(pv)
-                    qty  = float(qv)
-                    pnl  = (lp-ep)*qty if act.upper()=="BUY" else (ep-lp)*qty
-                    pc   = "#22c55e" if pnl>=0 else "#ef4444"
-                    sign = "+" if pnl>=0 else ""
-                    ltp_line = (f' &nbsp;·&nbsp; <span style="color:#94a3b8">LTP {fmt_px(lp)}</span>'
-                                f' <span style="color:{pc};font-weight:600">{sign}₹{abs(pnl):,.0f}</span>')
-                except:
-                    ltp_line = f' &nbsp;·&nbsp; <span style="color:#94a3b8">LTP {fmt_px(lp)}</span>'
+                    days_open = (now_ist().date() - datetime.strptime(dt_v,"%Y-%m-%d").date()).days
+                    days_str  = "today" if days_open==0 else f"{days_open}d"
+                except: days_str = "—"
 
-            is_editing = (st.session_state.edit_id == tid)
-            ci, cb2   = st.columns([3,1])
+                # Qty
+                cur_ls  = get_lot_size(sym)
+                cur_qty = int(lv)*cur_ls if (str(lv).isdigit() and cur_ls>1) else qv
+                qty_info = f"{lv}L×{cur_ls}={cur_qty}sh" if instr!="CASH" else f"{qv}sh"
 
-            with ci:
-                st.markdown(
-                    f'<div class="trade-symbol">{badge(act)} &nbsp;{desc}{new_b}</div>'
-                    f'<div class="trade-meta">{strat} · {qty_info}{ltp_line}</div>'
-                    f'<div class="trade-meta">{dt_v} · {fmt_px(pv)} · <span style="color:#475569">{days_str} open</span></div>',
-                    unsafe_allow_html=True
-                )
-            with cb2:
-                b1,b2 = st.columns(2)
-                if b1.button("✏", key=f"e_{tid}"):
-                    st.session_state.edit_id = None if is_editing else tid
-                    st.rerun()
-                if b2.button("✕", key=f"d_{tid}"):
-                    soft_delete(tid); st.session_state.edit_id=None; st.rerun()
+                # LTP + MTM per trade
+                ltp_str = ""
+                mtm_str = ""
+                if sym in ltp_map:
+                    lp = ltp_map[sym]
+                    ltp_str = fmt_px(lp)
+                    try:
+                        ep  = float(pv)
+                        qty = float(qv)
+                        pnl = (lp-ep)*qty if act.upper()=="BUY" else (ep-lp)*qty
+                        pc  = "#22c55e" if pnl>=0 else "#ef4444"
+                        mtm_str = f'<span style="color:{pc};font-weight:600">{"+" if pnl>=0 else ""}₹{abs(pnl):,.0f}</span>'
+                    except: mtm_str = ""
 
-            if is_editing:
-                st.markdown('<div class="edit-panel">', unsafe_allow_html=True)
-                ea,eb,ec = st.columns(3)
-                try:    dv = datetime.strptime(dt_v,"%Y-%m-%d").date()
-                except: dv = now_ist().date()
-                nd = ea.date_input("Date",    value=dv,              key=f"ed_{tid}")
-                np = eb.number_input("Price ₹", min_value=0.0, step=0.05,
-                                     format="%.2f", value=float(pv) if pv else 0.0, key=f"ep_{tid}")
-                nl = ec.number_input("Lots",    min_value=1, step=1,
-                                     value=int(lv) if str(lv).isdigit() else 1, key=f"el_{tid}")
-                s1,s2 = st.columns(2)
-                if s1.button("Save", key=f"sv_{tid}"):
-                    update_field(tid,"trade_date",str(nd))
-                    update_field(tid,"price",np)
-                    update_field(tid,"lots_qty",nl)
-                    ls = get_lot_size(sym)
-                    update_field(tid,"quantity", nl*ls if instr!="CASH" else nl)
-                    st.session_state.edit_id=None; st.rerun()
-                if s2.button("Cancel", key=f"cx_{tid}"):
-                    st.session_state.edit_id=None; st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
+                is_editing = (st.session_state.edit_id == tid)
+                ci, cb2   = st.columns([3,1])
 
-            st.markdown("<div style='margin-bottom:4px'></div>", unsafe_allow_html=True)
+                with ci:
+                    st.markdown(
+                        f'<div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:6px;padding:8px 12px;margin-bottom:4px;">'
+                        f'<div class="trade-symbol">{badge(act)} &nbsp;{desc}{new_b}</div>'
+                        f'<div class="trade-meta">{qty_info} · {fmt_px(pv)} entry'
+                        f'{"  ·  LTP " + ltp_str if ltp_str else ""}'
+                        f'{"  " + mtm_str if mtm_str else ""}'
+                        f'</div>'
+                        f'<div class="trade-meta">{dt_v} · {days_str} open</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                with cb2:
+                    b1,b2 = st.columns(2)
+                    if b1.button("✏", key=f"e_{tid}"):
+                        st.session_state.edit_id = None if is_editing else tid
+                        st.rerun()
+                    if b2.button("✕", key=f"d_{tid}"):
+                        soft_delete(tid); st.session_state.edit_id=None; st.rerun()
+
+                if is_editing:
+                    st.markdown('<div class="edit-panel">', unsafe_allow_html=True)
+                    ea,eb,ec = st.columns(3)
+                    try:    dv = datetime.strptime(dt_v,"%Y-%m-%d").date()
+                    except: dv = now_ist().date()
+                    nd = ea.date_input("Date",    value=dv,              key=f"ed_{tid}")
+                    np = eb.number_input("Price ₹", min_value=0.0, step=0.05,
+                                         format="%.2f", value=float(pv) if pv else 0.0, key=f"ep_{tid}")
+                    nl = ec.number_input("Lots",    min_value=1, step=1,
+                                         value=int(lv) if str(lv).isdigit() else 1, key=f"el_{tid}")
+                    s1,s2 = st.columns(2)
+                    if s1.button("Save", key=f"sv_{tid}"):
+                        update_field(tid,"trade_date",str(nd))
+                        update_field(tid,"price",np)
+                        update_field(tid,"lots_qty",nl)
+                        ls = get_lot_size(sym)
+                        update_field(tid,"quantity", nl*ls if instr!="CASH" else nl)
+                        st.session_state.edit_id=None; st.rerun()
+                    if s2.button("Cancel", key=f"cx_{tid}"):
+                        st.session_state.edit_id=None; st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+            # Spacing between strategy groups
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
