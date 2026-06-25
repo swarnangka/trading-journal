@@ -311,38 +311,49 @@ if "edit_trade_id" not in st.session_state:
 
 st.markdown("""
 <div class="pb-header">
-    <span class="pb-logo">⚡ Parabolic</span>
+    <span class="pb-logo">⚡ ParabolicTrends</span>
     <span class="pb-sub">Trade Entry</span>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ── INSTRUMENTS UPDATER ────────────────────────────────────────────────────────
-with st.expander("🔧 Update F&O Lot Sizes  —  upload or paste NSE fo_mktlots.csv"):
+# Instruments panel — auto-collapse after successful upload
+if "inst_expanded" not in st.session_state:
+    st.session_state.inst_expanded = True
+
+df_inst = read_instruments()
+inst_count = len(df_inst) if not df_inst.empty else 0
+inst_last  = df_inst["last_updated"].iloc[0] if (not df_inst.empty and "last_updated" in df_inst.columns) else None
+
+# Show compact status bar when collapsed
+if inst_count > 0:
+    st.markdown(
+        f'<div style="font-size:0.72rem;color:#475569;margin-bottom:6px;">'
+        f'F&O Instruments: <span style="color:#f97316">{inst_count} symbols</span>'
+        f'{" · updated " + inst_last if inst_last else ""}'
+        f' &nbsp;·&nbsp; <span style="color:#3b82f6;cursor:pointer;" '
+        f'onclick="">click below to update</span></div>',
+        unsafe_allow_html=True
+    )
+
+with st.expander("🔧 Update F&O Lot Sizes", expanded=st.session_state.inst_expanded and inst_count == 0):
     st.markdown(
         '<div style="font-size:0.78rem;color:#64748b;margin-bottom:10px;">'
-        'Upload <code>fo_mktlots.csv</code> directly (easiest), '
-        'or paste its text contents below.</div>',
+        'Download <code>fo_mktlots.csv</code> from NSE quarterly → '
+        'upload the file directly below → click Update.</div>',
         unsafe_allow_html=True
     )
 
     uploaded_file = st.file_uploader(
-        "Upload fo_mktlots.csv", type=["csv"],
+        "Select fo_mktlots.csv", type=["csv"],
         label_visibility="collapsed"
     )
-    csv_text = st.text_area("Or paste CSV text here", height=80,
-                             placeholder="UNDERLYING,SYMBOL,JUN-26,...",
-                             label_visibility="collapsed")
 
     ca, cb = st.columns([1, 4])
     if ca.button("⬆ Update Instruments"):
-        raw_text = ""
         if uploaded_file is not None:
             raw_text = uploaded_file.read().decode("utf-8", errors="replace")
-        elif csv_text.strip():
-            raw_text = csv_text
-
-        if raw_text:
             parsed = parse_fo_csv(raw_text)
             if parsed:
                 ok, msg = write_instruments(parsed)
@@ -350,17 +361,18 @@ with st.expander("🔧 Update F&O Lot Sizes  —  upload or paste NSE fo_mktlots
                     f'<div class="{"success-box" if ok else "warn-box"}">{msg}</div>',
                     unsafe_allow_html=True
                 )
+                if ok:
+                    st.session_state.inst_expanded = False
+                    st.rerun()
             else:
-                st.markdown('<div class="warn-box">⚠️ No valid rows found — check the file.</div>', unsafe_allow_html=True)
+                st.markdown('<div class="warn-box">⚠️ No valid rows found in file.</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="warn-box">⚠️ Upload a file or paste CSV content first.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="warn-box">⚠️ Select the fo_mktlots.csv file first.</div>', unsafe_allow_html=True)
 
-    df_inst = read_instruments()
-    if not df_inst.empty:
-        last = df_inst["last_updated"].iloc[0] if "last_updated" in df_inst.columns else "—"
+    if inst_count > 0:
         cb.markdown(
-            f'<div style="font-size:0.72rem;color:#475569;padding-top:0.6rem;">'
-            f'{len(df_inst)} symbols loaded · updated {last}</div>',
+            f'<div style="font-size:0.72rem;color:#475569;padding-top:0.6rem;">' +
+            f'{inst_count} symbols loaded · {inst_last}</div>',
             unsafe_allow_html=True
         )
 st.markdown("<div class='pb-divider'></div>", unsafe_allow_html=True)
@@ -433,13 +445,13 @@ with col_form:
                 if lot_size > 1:
                     st.markdown(
                         f'<div class="qty-pill">◆ {quantity:,} shares &nbsp;·&nbsp; '
-                        f'{lots} lot{"s" if lots>1 else ""} × {lot_size}</div>',
+                        f'{lots} lot{"s" if lots>1 else ""} × {lot_size} per lot</div>',
                         unsafe_allow_html=True
                     )
-                else:
+                elif symbol:
                     st.markdown(
-                        f'<div class="warn-box">Lot size for <b>{symbol}</b> not found — '
-                        f'update instruments above.</div>',
+                        f'<div class="warn-box">⚠️ Lot size for <b>{symbol}</b> not in instruments. '
+                        f'Upload fo_mktlots.csv above first. Qty will default to {lots} share(s).</div>',
                         unsafe_allow_html=True
                     )
 
@@ -534,6 +546,89 @@ with col_trades:
 
     df = read_trades()
     today_str = now_ist().strftime("%Y-%m-%d")
+
+    # ── POSITION METRICS ──
+    if not df.empty:
+        # Aggregate stats from what we have (LTP from AngelOne if available)
+        total_trades  = len(df)
+        buy_trades    = len(df[df["action"].astype(str).str.upper() == "BUY"]) if "action" in df.columns else 0
+        sell_trades   = total_trades - buy_trades
+
+        # Try fetch LTP for each open position via AngelOne
+        ltp_map = {}
+        try:
+            from core.angelone import get_ltp
+            for _, row in df.iterrows():
+                sym   = str(row.get("symbol",""))
+                exch  = str(row.get("exchange","NSE"))
+                instr = str(row.get("instrument","FUT"))
+                if sym and sym not in ltp_map:
+                    ltp = get_ltp(sym, exch, instr)
+                    if ltp:
+                        ltp_map[sym] = ltp
+        except Exception:
+            pass
+
+        # Calculate MTM where LTP available
+        mtm_total = 0.0
+        for _, row in df.iterrows():
+            sym      = str(row.get("symbol",""))
+            entry_px = float(row.get("price", 0) or 0)
+            qty      = float(row.get("quantity", 0) or 0)
+            action   = str(row.get("action","BUY")).upper()
+            if sym in ltp_map and qty > 0 and entry_px > 0:
+                ltp = ltp_map[sym]
+                pnl = (ltp - entry_px) * qty if action == "BUY" else (entry_px - ltp) * qty
+                mtm_total += pnl
+
+        mtm_color = "#22c55e" if mtm_total >= 0 else "#ef4444"
+        mtm_sign  = "+" if mtm_total >= 0 else ""
+        ltp_avail = len(ltp_map)
+
+        st.markdown(f"""
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:1rem;">
+            <div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:10px 12px;">
+                <div style="font-size:0.6rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px;">Open Positions</div>
+                <div style="font-size:1.2rem;font-weight:700;color:#e2e8f0;font-family:'JetBrains Mono',monospace;">{total_trades}</div>
+                <div style="font-size:0.65rem;color:#475569;">{buy_trades}L · {sell_trades}S</div>
+            </div>
+            <div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:10px 12px;">
+                <div style="font-size:0.6rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px;">MTM P&L</div>
+                <div style="font-size:1.2rem;font-weight:700;color:{mtm_color};font-family:'JetBrains Mono',monospace;">
+                    {"—" if ltp_avail == 0 else f"{mtm_sign}₹{abs(mtm_total):,.0f}"}
+                </div>
+                <div style="font-size:0.65rem;color:#475569;">{"LTP not available — add AngelOne" if ltp_avail == 0 else f"{ltp_avail} LTPs fetched"}</div>
+            </div>
+            <div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:10px 12px;">
+                <div style="font-size:0.6rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px;">Margin Used</div>
+                <div style="font-size:1.2rem;font-weight:700;color:#e2e8f0;font-family:'JetBrains Mono',monospace;">—</div>
+                <div style="font-size:0.65rem;color:#475569;">SPAN via AngelOne</div>
+            </div>
+            <div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:10px 12px;">
+                <div style="font-size:0.6rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px;">Today's Trades</div>
+                <div style="font-size:1.2rem;font-weight:700;color:#f97316;font-family:'JetBrains Mono',monospace;">
+                    {len(df[df["trade_date"].astype(str) == today_str]) if "trade_date" in df.columns else 0}
+                </div>
+                <div style="font-size:0.65rem;color:#475569;">entries today</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Per-trade LTP row
+        if ltp_map:
+            ltp_html = ""
+            for sym, ltp in ltp_map.items():
+                ltp_html += (
+                    f'<span style="font-size:0.7rem;font-family:JetBrains Mono,monospace;' +
+                    f'background:#0f0f1a;border:1px solid #1e1e2e;border-radius:4px;' +
+                    f'padding:3px 8px;margin:2px;display:inline-block;">' +
+                    f'<span style="color:#64748b">{sym}</span> ' +
+                    f'<span style="color:#e2e8f0">₹{ltp:,.2f}</span></span>'
+                )
+            st.markdown(
+                f'<div style="margin-bottom:10px;">{ltp_html}</div>',
+                unsafe_allow_html=True
+            )
 
     if df.empty:
         st.markdown(
