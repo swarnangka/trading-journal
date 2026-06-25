@@ -31,7 +31,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;background:#0a0a0f;color
 .stSelectbox label,.stNumberInput label,.stTextInput label,.stDateInput label,.stTimeInput label,.stTextArea label,.stCheckbox label{font-size:0.68rem!important;font-weight:500!important;letter-spacing:0.08em!important;text-transform:uppercase!important;color:#64748b!important;}
 .stSelectbox>div>div,.stTextInput>div>div>input,.stNumberInput>div>div>input,.stDateInput>div>div>input{background:#141420!important;border:1px solid #252538!important;border-radius:6px!important;color:#e2e8f0!important;font-size:0.875rem!important;}
 textarea{background:#141420!important;border:1px solid #252538!important;border-radius:6px!important;color:#e2e8f0!important;}
-.stButton>button{background:transparent;border:1px solid #252538;border-radius:6px;color:#94a3b8;font-size:0.75rem;font-weight:500;padding:0.4rem 0.9rem;transition:all 0.15s;letter-spacing:0.04em;}
+.stButton>button{background:transparent;border:1px solid #252538;border-radius:6px;color:#94a3b8;font-size:0.75rem;font-weight:500;padding:0.4rem 0.85rem;transition:all 0.15s;letter-spacing:0.04em;white-space:nowrap;}
 .stButton>button:hover{border-color:#f97316;color:#f97316;background:rgba(249,115,22,0.06);}
 .stForm [data-testid="stFormSubmitButton"]>button{background:#f97316;border:none;border-radius:6px;color:#fff;font-size:0.8rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;padding:0.55rem 1.5rem;width:100%;}
 .badge-buy{background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);color:#22c55e;border-radius:4px;padding:2px 8px;font-size:0.65rem;font-weight:600;}
@@ -40,12 +40,13 @@ textarea{background:#141420!important;border:1px solid #252538!important;border-
 .qty-box{background:#0f0f1a;border:1px solid #1e1e2e;border-radius:6px;padding:10px 14px;margin-top:8px;}
 .qty-label{font-size:0.6rem;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;}
 .qty-value{font-size:1rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
-.stat-box{background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:10px 14px;}
-.stat-label{font-size:0.6rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px;}
-.stat-value{font-size:1.15rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
-.stat-sub{font-size:0.65rem;color:#475569;margin-top:2px;}
-.trade-symbol{font-size:0.9rem;font-weight:600;color:#e2e8f0;margin-bottom:2px;}
-.trade-meta{font-size:0.72rem;color:#475569;font-family:'JetBrains Mono',monospace;}
+.stat-box{background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:10px 14px;min-height:80px;}
+.stat-label{font-size:0.58rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px;}
+.stat-value{font-size:1.1rem;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1.2;}
+.stat-value-sm{font-size:0.85rem;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1.3;}
+.stat-sub{font-size:0.62rem;color:#475569;margin-top:3px;}
+.trade-symbol{font-size:0.88rem;font-weight:600;color:#e2e8f0;margin-bottom:3px;line-height:1.3;}
+.trade-meta{font-size:0.71rem;color:#475569;font-family:'JetBrains Mono',monospace;line-height:1.5;}
 .edit-panel{background:#0a0a14;border:1px solid #2e2e48;border-radius:8px;padding:1rem 1.2rem;margin:4px 0 10px 0;}
 .warn-box{background:rgba(234,179,8,0.08);border-left:3px solid #eab308;border-radius:0 6px 6px 0;padding:8px 12px;font-size:0.78rem;color:#ca8a04;margin:6px 0;}
 .info-box{background:rgba(59,130,246,0.08);border-left:3px solid #3b82f6;border-radius:0 6px 6px 0;padding:8px 12px;font-size:0.78rem;color:#60a5fa;margin:6px 0;}
@@ -66,8 +67,19 @@ def get_client():
     raw["private_key"] = pk
     return gspread.authorize(Credentials.from_service_account_info(raw, scopes=SCOPES))
 
+@st.cache_resource(ttl=3600)
+def get_spreadsheet():
+    """Cache the spreadsheet object — avoids repeated open_by_key calls."""
+    return get_client().open_by_key(st.secrets["app"]["sheet_id"])
+
+@st.cache_resource(ttl=3600)
+def get_ws_cached(tab: str):
+    """Cache individual worksheet objects — avoids repeated .worksheet() calls."""
+    return get_spreadsheet().worksheet(tab)
+
 def get_ws(tab):
-    return get_client().open_by_key(st.secrets["app"]["sheet_id"]).worksheet(tab)
+    """Get worksheet — use cached version for read-heavy tabs."""
+    return get_ws_cached(tab)
 
 
 # ── DATA READS ────────────────────────────────────────────────────────────────
@@ -92,7 +104,7 @@ def get_instruments() -> pd.DataFrame:
         load_instruments_to_session()
     return st.session_state.get("_instruments_df", pd.DataFrame())
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)
 def read_trades():
     try:
         data = get_ws(TAB_TRADES).get_all_records()
@@ -110,7 +122,7 @@ def read_strategies():
         return pd.DataFrame(data) if data else pd.DataFrame()
     except: return pd.DataFrame()
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def read_cash_stocks():
     """Read user-maintained cash stock list from CASH sheet tab."""
     try:
@@ -879,18 +891,17 @@ with col_trades:
                     lots  = float(row.get("lots_qty", row.get("quantity",0)) or 0)
                     tid_r = str(row.get("trade_id",""))
                     if sym in ltp_map:
-                        ltp     = ltp_map[sym]
-                        cur_ls  = get_lot_size(sym)
-                        cur_qty = lots * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
+                        ltp  = ltp_map[sym]
                         if instr.upper() == "CASH":
-                            # Delivery: full value required (20% SEBI VaR + ELM ≈ 20-30%)
-                            # Use 25% as conservative estimate for delivery margin
-                            pos_margin = ltp * cur_qty * 0.25
-                        elif instr.upper() == "OPT":
-                            pos_margin = ltp * cur_qty * 0.12
+                            # Delivery: qty × LTP × 20% (SEBI VaR margin for delivery)
+                            cash_qty   = float(row.get("quantity", 0) or 0)
+                            pos_margin = ltp * cash_qty * 0.20
                         else:
-                            pos_margin = ltp * cur_qty * 0.15
-                        # Store per trade_id for position-level display
+                            cur_ls     = get_lot_size(sym)
+                            lots_r     = float(row.get("lots_qty", row.get("quantity",0)) or 0)
+                            cur_qty    = lots_r * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
+                            pct        = 0.12 if instr.upper() == "OPT" else 0.15
+                            pos_margin = ltp * cur_qty * pct
                         margin_map[tid_r] = pos_margin
                 total_margin_used = sum(margin_map.values())
 
@@ -932,8 +943,23 @@ with col_trades:
         m1,m2,m3,m4 = st.columns(4)
         m1.markdown(f'<div class="stat-box"><div class="stat-label">Positions</div><div class="stat-value" style="color:#e2e8f0">{len(df)}</div><div class="stat-sub">{len(df[df["action"].str.upper()=="BUY"])}L · {len(df[df["action"].str.upper()=="SELL"])}S</div></div>', unsafe_allow_html=True)
         m2.markdown(f'<div class="stat-box"><div class="stat-label">Total MTM</div><div class="stat-value" style="color:{tm_c}">{tm_s}</div><div class="stat-sub">{"live" if ltp_map else "needs AngelOne"}</div></div>', unsafe_allow_html=True)
-        m3.markdown(f'<div class="stat-box"><div class="stat-label">Margin Utilised</div><div class="stat-value" style="color:{mg_c}">{mg_s} {mg_p}</div><div class="stat-sub">{"of ₹"+str(int(total_capital//100000))+"L allocated" if total_capital>0 else "SPAN estimated"}</div></div>', unsafe_allow_html=True)
-        m4.markdown(f'<div class="stat-box"><div class="stat-label">Margin Remaining</div><div class="stat-value" style="color:#e2e8f0">{cr_s}</div><div class="stat-sub">{"of total capital" if cr_s != "—" else "needs AngelOne creds"}</div></div>', unsafe_allow_html=True)
+        m3.markdown(
+            f'<div class="stat-box">'
+            f'<div class="stat-label">Margin Utilised</div>'
+            f'<div class="stat-value-sm" style="color:{mg_c}">{mg_s}</div>'
+            f'<div style="font-size:0.78rem;font-weight:600;color:{mg_c};margin-top:1px;">{mg_p}</div>'
+            f'<div class="stat-sub">{"of ₹"+str(int(total_capital//100000))+"L capital" if total_capital>0 else "SPAN estimated"}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        m4.markdown(
+            f'<div class="stat-box">'
+            f'<div class="stat-label">Margin Remaining</div>'
+            f'<div class="stat-value" style="color:#e2e8f0">{cr_s}</div>'
+            f'<div class="stat-sub">{"of ₹"+str(int(total_capital//100000))+"L total" if cr_s != "—" else "add AngelOne"}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
         st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
@@ -1116,7 +1142,20 @@ with col_trades:
                         st.session_state.edit_id = None if is_editing else tid
                         st.rerun()
                     if b2.button("✕", key=f"d_{_key}", help="Delete"):
-                        soft_delete(tid)
+                        # Delete ALL trades in this aggregated group
+                        grp_tids = [
+                            str(r.get("trade_id",""))
+                            for _, r in strategy_df.iterrows()
+                            if str(r.get("symbol","")) == sym
+                            and str(r.get("instrument","")) == instr
+                            and str(r.get("expiry","")) == exp_v
+                            and str(r.get("action","")) == act
+                            and str(r.get("strike","")) == stk_v
+                            and str(r.get("option_type","")) == opt_v
+                        ]
+                        for _tid in grp_tids:
+                            if _tid:
+                                soft_delete(_tid)
                         st.session_state.edit_id = None
                         st.rerun()
 
