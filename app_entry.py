@@ -110,6 +110,37 @@ def read_strategies():
         return pd.DataFrame(data) if data else pd.DataFrame()
     except: return pd.DataFrame()
 
+@st.cache_data(ttl=300)
+def read_cash_stocks():
+    """Read user-maintained cash stock list from CASH sheet tab."""
+    try:
+        data = get_ws("CASH").get_all_records()
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except:
+        return pd.DataFrame()
+
+def get_cash_symbols():
+    """Return list of cash stock symbols from CASH tab (NSE equity list)."""
+    df = read_cash_stocks()
+    if df.empty:
+        return []
+    # Handle both "SYMBOL" (NSE CSV) and "symbol" (lowercase) column names
+    sym_col = next((c for c in df.columns if c.strip().upper() == "SYMBOL"), None)
+    if not sym_col:
+        return []
+    return sorted(df[sym_col].str.upper().str.strip().tolist())
+
+def get_cash_stock_name(symbol: str) -> str:
+    """Return company name for a given symbol from CASH tab."""
+    df = read_cash_stocks()
+    if df.empty: return ""
+    sym_col  = next((c for c in df.columns if c.strip().upper() == "SYMBOL"), None)
+    name_col = next((c for c in df.columns if "NAME" in c.strip().upper()), None)
+    if not sym_col or not name_col: return ""
+    match = df[df[sym_col].str.upper().str.strip() == symbol.upper().strip()]
+    if match.empty: return ""
+    return str(match.iloc[0][name_col]).strip()
+
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def get_strategy_list():
@@ -573,7 +604,22 @@ with col_form:
         instrument = sc2.selectbox("Instrument", ["FUT","OPT","CASH"], key="sel_instrument")
 
         if instrument == "CASH":
-            symbol   = st.text_input("Symbol", placeholder="e.g. RELIANCE", key="sel_symbol_text").upper().strip()
+            cash_symbols = get_cash_symbols()
+            if cash_symbols:
+                cash_opts   = cash_symbols + ["✏ Type manually..."]
+                cash_choice = st.selectbox("Symbol (type to search)", cash_opts, key="sel_symbol_cash")
+                if cash_choice == "✏ Type manually...":
+                    symbol = st.text_input("Stock symbol", placeholder="e.g. RELIANCE", key="sel_cash_manual").upper().strip()
+                else:
+                    symbol = cash_choice
+                    cname  = get_cash_stock_name(symbol)
+                    if cname:
+                        st.markdown(f'<div style="font-size:0.72rem;color:#475569;margin:-2px 0 6px 0;">{cname}</div>', unsafe_allow_html=True)
+            else:
+                symbol = st.text_input(
+                    "Symbol (paste EQUITY_L.csv into CASH tab for dropdown)",
+                    placeholder="e.g. RELIANCE", key="sel_symbol_text"
+                ).upper().strip()
             expiry, strike, opt_type = "", 0, ""
         else:
             if fno_symbols:
@@ -803,7 +849,7 @@ with col_trades:
                     if sym and sym not in ltp_map:
                         token = get_symbol_token(sym, exch, instr, exp_v, stk_v, opt_v)
                         token_map[sym] = token
-                        ltp, _ = fetch_current_ltp(sym, exch, token)
+                        ltp, _ = fetch_current_ltp(sym, exch, token, instr)
                         if ltp and ltp > 0:
                             ltp_map[sym] = ltp
 
@@ -832,12 +878,18 @@ with col_trades:
                     instr = str(row.get("instrument","FUT"))
                     lots  = float(row.get("lots_qty", row.get("quantity",0)) or 0)
                     tid_r = str(row.get("trade_id",""))
-                    if sym in ltp_map and instr.upper() != "CASH":
+                    if sym in ltp_map:
                         ltp     = ltp_map[sym]
                         cur_ls  = get_lot_size(sym)
                         cur_qty = lots * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
-                        pct     = 0.12 if instr.upper()=="OPT" else 0.15
-                        pos_margin = ltp * cur_qty * pct
+                        if instr.upper() == "CASH":
+                            # Delivery: full value required (20% SEBI VaR + ELM ≈ 20-30%)
+                            # Use 25% as conservative estimate for delivery margin
+                            pos_margin = ltp * cur_qty * 0.25
+                        elif instr.upper() == "OPT":
+                            pos_margin = ltp * cur_qty * 0.12
+                        else:
+                            pos_margin = ltp * cur_qty * 0.15
                         # Store per trade_id for position-level display
                         margin_map[tid_r] = pos_margin
                 total_margin_used = sum(margin_map.values())
