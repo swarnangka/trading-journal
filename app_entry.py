@@ -14,6 +14,7 @@ st.set_page_config(page_title="ParabolicTrends · Entry", page_icon="⚡", layou
 IST    = pytz.timezone("Asia/Kolkata")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
 TAB_TRADES      = "TRADES"
+TAB_CLOSED      = "CLOSED_TRADES"
 TAB_INSTRUMENTS = "INSTRUMENTS"
 TAB_STRATEGIES  = "STRATEGIES"
 
@@ -182,69 +183,75 @@ def soft_delete(trade_id):
     except Exception as e:
         st.error(f"Delete error: {e}"); return False
 
-def close_trade(trade_id: str, close_price: float, close_date: str) -> bool:
+def close_trade(trade_id: str, close_price: float, close_date: str,
+                trade_data: dict = None) -> bool:
     """
-    Close an open trade:
-    1. Mark original trade as is_deleted=TRUE in TRADES tab
-    2. Write closing entry to CLOSED_TRADES tab with P&L
+    Close an open trade — optimized for speed.
+    trade_data: pass the trade dict from df to avoid re-reading sheet.
+    1. Mark original as deleted (single cell update)
+    2. Append to CLOSED_TRADES
     """
     try:
         ws      = get_ws(TAB_TRADES)
         headers = ws.row_values(1)
         ti      = headers.index("trade_id") + 1
-        rows    = ws.get_all_values()
+        di      = headers.index("is_deleted") + 1
 
-        # Find the trade row
-        trade_row = None
-        row_idx   = None
-        for i, row in enumerate(rows[1:], start=2):
-            if len(row) >= ti and row[ti-1] == str(trade_id):
-                trade_row = dict(zip(headers, row))
-                row_idx   = i
+        # Find row index using col_values (faster than get_all_values)
+        tid_col = ws.col_values(ti)
+        row_idx = None
+        for i, v in enumerate(tid_col):
+            if v == str(trade_id):
+                row_idx = i + 1
                 break
 
-        if not trade_row:
+        if row_idx is None:
+            st.error("Trade not found.")
             return False
 
-        # Mark as deleted in TRADES
-        di = headers.index("is_deleted") + 1
+        # Get trade data from sheet if not passed
+        if not trade_data:
+            row_vals  = ws.row_values(row_idx)
+            trade_data = dict(zip(headers, row_vals))
+
+        # Batch: mark deleted + get data in same operation
         ws.update_cell(row_idx, di, "TRUE")
+
+        # Calculate P&L
+        action   = str(trade_data.get("action","BUY")).upper()
+        entry_px = float(trade_data.get("price", 0) or 0)
+        lots     = float(trade_data.get("lots_qty", 0) or 0)
+        sym      = str(trade_data.get("symbol",""))
+        lot_size = get_lot_size(sym)
+        qty      = lots * lot_size if lot_size > 1 and lots > 0 else float(trade_data.get("quantity", 0) or 0)
+        gross_pnl = (close_price - entry_px) * qty if action == "BUY" else (entry_px - close_price) * qty
 
         # Write to CLOSED_TRADES
         ws_closed = get_ws(TAB_CLOSED)
         c_headers = ws_closed.row_values(1)
 
-        action    = str(trade_row.get("action","BUY")).upper()
-        entry_px  = float(trade_row.get("price", 0) or 0)
-        qty       = float(trade_row.get("quantity", 0) or 0)
-        lots      = float(trade_row.get("lots_qty", 0) or 0)
-        lot_size  = get_lot_size(str(trade_row.get("symbol","")))
-        # Use current lot size if stored qty looks wrong
-        if lot_size > 1 and lots > 0:
-            qty = lots * lot_size
-
-        gross_pnl = (close_price - entry_px) * qty if action == "BUY" else (entry_px - close_price) * qty
-
-        closed_row = {
-            "trade_id":         trade_row.get("trade_id",""),
-            "strategy":         trade_row.get("strategy",""),
-            "symbol":           trade_row.get("symbol",""),
-            "exchange":         trade_row.get("exchange",""),
-            "instrument":       trade_row.get("instrument",""),
-            "expiry":           trade_row.get("expiry",""),
-            "strike":           trade_row.get("strike",""),
-            "option_type":      trade_row.get("option_type",""),
-            "direction":        action,
-            "entry_date":       trade_row.get("trade_date",""),
-            "exit_date":        close_date,
-            "lots_qty":         lots,
-            "quantity":         qty,
-            "avg_entry_price":  entry_px,
-            "exit_price":       close_price,
-            "gross_pnl":        round(gross_pnl, 2),
+        closed = {
+            "trade_id":        trade_data.get("trade_id",""),
+            "strategy":        trade_data.get("strategy",""),
+            "symbol":          sym,
+            "exchange":        trade_data.get("exchange",""),
+            "instrument":      trade_data.get("instrument",""),
+            "expiry":          trade_data.get("expiry",""),
+            "strike":          trade_data.get("strike",""),
+            "option_type":     trade_data.get("option_type",""),
+            "direction":       action,
+            "entry_date":      trade_data.get("trade_date",""),
+            "exit_date":       close_date,
+            "lots_qty":        lots,
+            "quantity":        qty,
+            "avg_entry_price": entry_px,
+            "exit_price":      close_price,
+            "gross_pnl":       round(gross_pnl, 2),
         }
-        row_data = [str(closed_row.get(h,"")) for h in c_headers]
-        ws_closed.append_row(row_data, value_input_option="USER_ENTERED")
+        ws_closed.append_row(
+            [str(closed.get(h,"")) for h in c_headers],
+            value_input_option="USER_ENTERED"
+        )
         read_trades.clear()
         return True
     except Exception as e:
@@ -819,7 +826,23 @@ with col_trades:
                     except: pass
                     cs1, cs2 = st.columns(2)
                     if cs1.button("✓ Confirm Close", key=f"cf_{tid}"):
-                        ok_close = close_trade(tid, close_px, str(close_dt))
+                        # Pass trade data from df row — avoids extra sheet read
+                        trade_dict = {
+                            "trade_id":   tid,
+                            "action":     act,
+                            "price":      pv,
+                            "lots_qty":   lv,
+                            "quantity":   qv,
+                            "symbol":     sym,
+                            "strategy":   strat,
+                            "exchange":   str(row.get("exchange","NSE")),
+                            "instrument": instr,
+                            "expiry":     exp_v,
+                            "strike":     stk_v,
+                            "option_type":opt_v,
+                            "trade_date": dt_v,
+                        }
+                        ok_close = close_trade(tid, close_px, str(close_dt), trade_dict)
                         if ok_close:
                             st.session_state.pop(f"close_{tid}", None)
                             st.rerun()
