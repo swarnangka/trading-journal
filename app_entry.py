@@ -299,24 +299,54 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
             pnl       = (close_price - entry_px)*qty_this if orig_action=="BUY" else (entry_px - close_price)*qty_this
             total_pnl += pnl
 
-            # Write P&L record to CLOSED_TRADES
+            # Hold days calculation
+            try:
+                from datetime import date as _date
+                entry_dt = trade.get("trade_date","")
+                if entry_dt:
+                    ed = datetime.strptime(entry_dt, "%Y-%m-%d").date()
+                    cd = datetime.strptime(close_date, "%Y-%m-%d").date()
+                    hold_days = (cd - ed).days
+                else:
+                    hold_days = 0
+            except:
+                hold_days = 0
+
+            # ROI
+            roi_pct = round((pnl / (entry_px * qty_this) * 100), 2) if entry_px > 0 and qty_this > 0 else 0
+
+            # Write P&L record to CLOSED_TRADES — column order matches setup_sheet.py CLOSED_HEADERS
             closed = {
-                "trade_id":        trade.get("trade_id",""),
-                "strategy":        strategy,
-                "symbol":          symbol,
-                "exchange":        exchange,
-                "instrument":      instrument,
-                "expiry":          expiry,
-                "strike":          strike,
-                "option_type":     opt_type,
-                "direction":       orig_action,
-                "entry_date":      trade.get("trade_date",""),
-                "exit_date":       close_date,
-                "lots_qty":        lots_this,
-                "quantity":        qty_this,
-                "avg_entry_price": entry_px,
-                "exit_price":      close_price,
-                "gross_pnl":       round(pnl, 2),
+                "trade_id":         trade.get("trade_id",""),
+                "strategy":         strategy,
+                "symbol":           symbol,
+                "exchange":         exchange,
+                "instrument":       instrument,
+                "expiry":           expiry,
+                "strike":           strike,
+                "option_type":      opt_type,
+                "direction":        orig_action,
+                "entry_date":       trade.get("trade_date",""),
+                "exit_date":        close_date,
+                "lots_qty":         lots_this,
+                "quantity":         qty_this,
+                "avg_entry_price":  entry_px,
+                "exit_price":       close_price,
+                "gross_pnl":        round(pnl, 2),
+                "brokerage":        40.0,   # ₹20 per leg × 2
+                "stt":              round(close_price * qty_this * 0.0001, 2),
+                "exchange_charges": round(close_price * qty_this * 0.00002, 2),
+                "sebi_charges":     round(close_price * qty_this * 0.000001, 2),
+                "gst":              round(40.0 * 0.18, 2),
+                "stamp_duty":       round(entry_px * qty_this * 0.00003, 2),
+                "total_charges":    round(40 + close_price*qty_this*0.0001 + 40*0.18, 2),
+                "net_pnl":          round(pnl - (40 + close_price*qty_this*0.0001 + 40*0.18), 2),
+                "roi_pct":          roi_pct,
+                "hold_days":        hold_days,
+                "exit_type":        "MANUAL",
+                "is_edited":        "FALSE",
+                "edit_timestamp":   "",
+                "edit_notes":       "",
             }
             closed_records.append([str(closed.get(h,"")) for h in c_headers])
 
@@ -907,8 +937,40 @@ with col_trades:
 
             st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
+            # ── AGGREGATE same symbol+expiry+strike+action into one display row ──
+            agg_rows = []
+            grp_cols = ["symbol","instrument","expiry","strike","option_type","action"]
+            avail_gc = [c for c in grp_cols if c in strategy_df.columns]
+            for grp_key, grp in strategy_df.groupby(avail_gc, dropna=False, sort=False):
+                base = grp.sort_values("timestamp_entry").iloc[0].copy() if "timestamp_entry" in grp.columns else grp.iloc[0].copy()
+                total_lots = 0.0
+                total_qty  = 0.0
+                wprice_sum = 0.0
+                earliest_date = None
+                for _, r in grp.iterrows():
+                    lots_r = float(r.get("lots_qty", r.get("quantity",0)) or 0)
+                    px_r   = float(r.get("price",0) or 0)
+                    ls_r   = get_lot_size(str(r.get("symbol","")))
+                    qty_r  = lots_r * ls_r if ls_r > 1 else float(r.get("quantity",0) or 0)
+                    total_lots += lots_r
+                    total_qty  += qty_r
+                    wprice_sum += px_r * qty_r
+                    dt_r = str(r.get("trade_date",""))
+                    if dt_r and (earliest_date is None or dt_r < earliest_date):
+                        earliest_date = dt_r
+                avg_px = wprice_sum / total_qty if total_qty > 0 else 0
+                base["lots_qty"]   = total_lots
+                base["quantity"]   = int(total_qty)
+                base["price"]      = round(avg_px, 2)
+                base["trade_date"] = earliest_date or str(base.get("trade_date",""))
+                # Use first trade_id for key but mark as aggregated
+                base["_agg_count"] = len(grp)
+                agg_rows.append(base)
+
+            render_df = pd.DataFrame(agg_rows) if agg_rows else strategy_df
+
             # Trade rows under this strategy
-            for _ri, (_, row) in enumerate(strategy_df.iterrows()):
+            for _ri, (_, row) in enumerate(render_df.iterrows()):
                 tid   = str(row.get("trade_id","")).strip()
                 sym   = str(row.get("symbol","")).strip()
                 act   = str(row.get("action","")).strip()
@@ -928,10 +990,13 @@ with col_trades:
                 dt_v  = str(row.get("trade_date",""))
 
                 # Descriptor
+                agg_count = int(row.get("_agg_count", 1))
                 desc  = sym
                 if exp_v: desc += f" {exp_v}"
                 if stk_v and stk_v not in ("","0"): desc += f" {stk_v}{opt_v}"
                 new_b = '<span class="badge-new">NEW</span>' if dt_v==today_str else ""
+                # Show aggregation indicator if multiple trades combined
+                agg_b = f'<span style="font-size:0.6rem;color:#7c6fcd;margin-left:4px;">[{agg_count} trades]</span>' if agg_count > 1 else ""
 
                 # Days open
                 try:
@@ -968,7 +1033,7 @@ with col_trades:
                 with ci:
                     st.markdown(
                         f'<div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:6px;padding:8px 12px;margin-bottom:4px;">'
-                        f'<div class="trade-symbol">{badge(act)} &nbsp;{desc}{new_b}</div>'
+                        f'<div class="trade-symbol">{badge(act)} &nbsp;{desc}{new_b}{agg_b}</div>'
                         f'<div class="trade-meta">{qty_info} · {fmt_px(pv)} entry'
                         f'{"  ·  LTP " + ltp_str if ltp_str else ""}'
                         f'{"  " + mtm_str if mtm_str else ""}'
