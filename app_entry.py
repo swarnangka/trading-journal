@@ -31,7 +31,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;background:#0a0a0f;color
 .stSelectbox label,.stNumberInput label,.stTextInput label,.stDateInput label,.stTimeInput label,.stTextArea label,.stCheckbox label{font-size:0.68rem!important;font-weight:500!important;letter-spacing:0.08em!important;text-transform:uppercase!important;color:#64748b!important;}
 .stSelectbox>div>div,.stTextInput>div>div>input,.stNumberInput>div>div>input,.stDateInput>div>div>input{background:#141420!important;border:1px solid #252538!important;border-radius:6px!important;color:#e2e8f0!important;font-size:0.875rem!important;}
 textarea{background:#141420!important;border:1px solid #252538!important;border-radius:6px!important;color:#e2e8f0!important;}
-.stButton>button{background:transparent;border:1px solid #252538;border-radius:6px;color:#94a3b8;font-size:0.75rem;padding:0.4rem 0.9rem;transition:all 0.15s;}
+.stButton>button{background:transparent;border:1px solid #252538;border-radius:6px;color:#94a3b8;font-size:0.75rem;font-weight:500;padding:0.4rem 0.9rem;transition:all 0.15s;letter-spacing:0.04em;}
 .stButton>button:hover{border-color:#f97316;color:#f97316;background:rgba(249,115,22,0.06);}
 .stForm [data-testid="stFormSubmitButton"]>button{background:#f97316;border:none;border-radius:6px;color:#fff;font-size:0.8rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;padding:0.55rem 1.5rem;width:100%;}
 .badge-buy{background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);color:#22c55e;border-radius:4px;padding:2px 8px;font-size:0.65rem;font-weight:600;}
@@ -690,7 +690,7 @@ with col_trades:
     if rb1.button("↻ Refresh"):
         read_trades.clear()
         st.rerun()
-    if rb2.button("🗑 Clear All Test Data", help="Marks ALL open trades as deleted. Use to reset."):
+    if rb2.button("🗑 Clear Data", help="Marks ALL open trades as deleted. Use to reset test data."):
         st.session_state["confirm_clear"] = True
 
     if st.session_state.get("confirm_clear", False):
@@ -908,14 +908,20 @@ with col_trades:
             st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
             # Trade rows under this strategy
-            for _, row in strategy_df.iterrows():
-                tid   = str(row.get("trade_id",""))
-                sym   = str(row.get("symbol",""))
-                act   = str(row.get("action",""))
-                instr = str(row.get("instrument",""))
-                exp_v = str(row.get("expiry",""))
-                stk_v = str(row.get("strike",""))
-                opt_v = str(row.get("option_type",""))
+            for _ri, (_, row) in enumerate(strategy_df.iterrows()):
+                tid   = str(row.get("trade_id","")).strip()
+                sym   = str(row.get("symbol","")).strip()
+                act   = str(row.get("action","")).strip()
+                instr = str(row.get("instrument","")).strip()
+                exp_v = str(row.get("expiry","")).strip()
+                stk_v = str(row.get("strike","")).strip()
+                opt_v = str(row.get("option_type","")).strip()
+
+                # Skip corrupted/empty rows
+                if not tid or not sym or not act:
+                    continue
+                # Make key unique even if tid is duplicated (safety)
+                _key = f"{strategy_name}_{tid}_{_ri}"
                 lv    = str(row.get("lots_qty",""))
                 qv    = str(row.get("quantity",""))
                 pv    = row.get("price",0)
@@ -976,10 +982,10 @@ with col_trades:
 
                 with cb2:
                     b1, b2 = st.columns(2)
-                    if b1.button("✏", key=f"e_{tid}", help="Edit"):
+                    if b1.button("✏", key=f"e_{_key}", help="Edit"):
                         st.session_state.edit_id = None if is_editing else tid
                         st.rerun()
-                    if b2.button("✕", key=f"d_{tid}", help="Delete"):
+                    if b2.button("✕", key=f"d_{_key}", help="Delete"):
                         soft_delete(tid)
                         st.session_state.edit_id = None
                         st.rerun()
@@ -989,20 +995,20 @@ with col_trades:
                     ea,eb,ec = st.columns(3)
                     try:    dv = datetime.strptime(dt_v,"%Y-%m-%d").date()
                     except: dv = now_ist().date()
-                    nd = ea.date_input("Date",    value=dv,              key=f"ed_{tid}")
+                    nd = ea.date_input("Date",    value=dv,              key=f"ed_{_key}")
                     np = eb.number_input("Price ₹", min_value=0.0, step=0.05,
-                                         format="%.2f", value=float(pv) if pv else 0.0, key=f"ep_{tid}")
+                                         format="%.2f", value=float(pv) if pv else 0.0, key=f"ep_{_key}")
                     nl = ec.number_input("Lots",    min_value=1, step=1,
-                                         value=int(lv) if str(lv).isdigit() else 1, key=f"el_{tid}")
+                                         value=int(lv) if str(lv).isdigit() else 1, key=f"el_{_key}")
                     s1,s2 = st.columns(2)
-                    if s1.button("Save", key=f"sv_{tid}"):
+                    if s1.button("Save", key=f"sv_{_key}"):
                         update_field(tid,"trade_date",str(nd))
                         update_field(tid,"price",np)
                         update_field(tid,"lots_qty",nl)
                         ls = get_lot_size(sym)
                         update_field(tid,"quantity", nl*ls if instr!="CASH" else nl)
                         st.session_state.edit_id=None; st.rerun()
-                    if s2.button("Cancel", key=f"cx_{tid}"):
+                    if s2.button("Cancel", key=f"cx_{_key}"):
                         st.session_state.edit_id=None; st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
 
