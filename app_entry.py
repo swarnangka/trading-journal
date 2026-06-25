@@ -480,7 +480,9 @@ with col_trades:
             from core.angelone import get_angel_obj, get_symbol_token, fetch_current_ltp, fetch_margin_for_positions
             obj = get_angel_obj()
             if obj:
+                token_map = {}  # {sym: token} — reuse tokens for both LTP and margin
                 positions_for_margin = []
+
                 for _, row in df.iterrows():
                     sym   = str(row.get("symbol",""))
                     exch  = str(row.get("exchange","NSE"))
@@ -490,19 +492,43 @@ with col_trades:
                     opt_v = str(row.get("option_type",""))
                     qty   = float(row.get("quantity",0) or 0)
                     px    = float(row.get("price",0) or 0)
+
                     if sym and sym not in ltp_map:
                         token = get_symbol_token(sym, exch, instr, exp_v, stk_v, opt_v)
+                        token_map[sym] = token
                         ltp, _ = fetch_current_ltp(sym, exch, token)
                         if ltp and ltp > 0:
                             ltp_map[sym] = ltp
+
+                    # Build margin positions with token
+                    if instr.upper() != "CASH" and sym:
                         positions_for_margin.append({
-                            "symbol": sym, "exchange": exch, "instrument": instr,
-                            "token": token, "quantity": qty, "avg_entry_price": px,
-                            "strategy": str(row.get("strategy","")),
+                            "symbol":          sym,
+                            "exchange":        exch,
+                            "instrument":      instr,
+                            "token":           token_map.get(sym,""),
+                            "quantity":        qty,
+                            "avg_entry_price": px,
+                            "strategy":        str(row.get("strategy","")),
                         })
+
+                # Try SPAN margin API first
                 if positions_for_margin:
                     mdata = fetch_margin_for_positions(positions_for_margin)
                     total_margin_used = float(mdata.get("_total_required", 0))
+
+                # Fallback: if SPAN API returns 0, estimate from LTP × qty × margin_pct
+                if total_margin_used == 0 and ltp_map:
+                    for _, row in df.iterrows():
+                        sym   = str(row.get("symbol",""))
+                        instr = str(row.get("instrument","FUT"))
+                        qty   = float(row.get("quantity",0) or 0)
+                        if sym in ltp_map and instr.upper() != "CASH":
+                            ltp       = ltp_map[sym]
+                            # NSE equity FUT SPAN ~15%, index ~12%, OPT = premium paid
+                            pct = 0.12 if instr.upper()=="OPT" else 0.15
+                            total_margin_used += ltp * qty * pct
+
         except Exception:
             pass
 
