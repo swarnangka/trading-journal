@@ -348,7 +348,31 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
                 "edit_timestamp":   "",
                 "edit_notes":       "",
             }
-            closed_records.append([str(closed.get(h,"")) for h in c_headers])
+            # Build row matching EXACT sheet column order
+            # Using get() with fallbacks for both possible header name variants
+            def _cv(key, alt=None):
+                v = closed.get(key, closed.get(alt,"") if alt else "")
+                return str(v) if v not in (None,"") else ""
+            
+            row_for_sheet = []
+            for h in c_headers:
+                # Map header variants
+                mapping = {
+                    "open_date":       closed.get("entry_date",""),
+                    "entry_date":      closed.get("entry_date",""),
+                    "close_date":      closed.get("exit_date",""),
+                    "exit_date":       closed.get("exit_date",""),
+                    "avg_exit_price":  closed.get("exit_price",""),
+                    "exit_price":      closed.get("exit_price",""),
+                    "lots":            closed.get("lots_qty",""),
+                    "lots_qty":        closed.get("lots_qty",""),
+                    "close_id":        closed.get("trade_id",""),
+                    "linked_trade_ids":closed.get("trade_id",""),
+                    "close_type":      closed.get("exit_type","MANUAL"),
+                    "exit_type":       closed.get("exit_type","MANUAL"),
+                }
+                row_for_sheet.append(str(mapping.get(h, closed.get(h, ""))))
+            closed_records.append(row_for_sheet)
 
             # Update TRADES tab — reduce qty or mark deleted
             di = col.get("is_deleted", 0)
@@ -640,20 +664,9 @@ with col_form:
             notes     = st.text_area("Notes", height=56, placeholder="Setup, SL, reason...")
 
             # ── CLOSURE TRADE TOGGLE ──
-            is_closure = st.checkbox(
-                "🔴 This is a CLOSURE trade (closes/reduces existing position)",
-                value=False,
-                help="Tick this when selling to close an existing BUY, or buying to close an existing SELL. "
-                     "This reduces open position qty and records the trade as closed with P&L."
-            )
-            if is_closure:
-                st.markdown(
-                    '<div class="info-box">↩ Closure trade — this will reduce the matching open position '
-                    'and record P&L in Closed Trades.</div>',
-                    unsafe_allow_html=True
-                )
+            is_closure = st.checkbox("🔴 Closure trade", value=False)
 
-            submitted = st.form_submit_button("LOG TRADE →" if not is_closure else "CLOSE POSITION →")
+            submitted = st.form_submit_button("LOG TRADE →")
 
         if submitted:
             if not symbol:
@@ -716,7 +729,7 @@ with col_form:
 with col_trades:
     st.markdown('<div class="section-title">Open Trades</div>', unsafe_allow_html=True)
 
-    rb1, rb2 = st.columns([1, 1])
+    rb1, _, rb2 = st.columns([1, 2, 1])
     if rb1.button("↻ Refresh"):
         read_trades.clear()
         st.rerun()
@@ -897,15 +910,15 @@ with col_trades:
             strat_today = len(strategy_df[strategy_df["trade_date"].astype(str)==today_str]) if "trade_date" in strategy_df.columns else 0
 
             # Strategy header row
-            sc1, sc2, sc3, sc4, sc5 = st.columns([2,1,1,1,1])
+            sc1, sc2, sc3, sc4, sc5 = st.columns([1.2, 0.8, 1.2, 1.8, 0.8])
             sc1.markdown(
                 f'<div style="background:rgba(249,115,22,0.12);border:1px solid rgba(249,115,22,0.3);'
                 f'border-radius:5px;padding:5px 12px;display:inline-block;font-size:0.75rem;'
-                f'font-weight:700;letter-spacing:0.1em;color:#f97316;text-transform:uppercase;">{strategy_name}</div>',
+                f'font-weight:700;letter-spacing:0.1em;color:#f97316;text-transform:uppercase;white-space:nowrap;">{strategy_name}</div>',
                 unsafe_allow_html=True
             )
-            sc2.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Positions</div><div style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">{len(strategy_df)}</div>', unsafe_allow_html=True)
-            sc3.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">MTM P&L</div><div style="font-size:0.9rem;font-weight:600;color:{strat_mtm_c};">{strat_mtm_s}</div>', unsafe_allow_html=True)
+            sc2.markdown(f'<div style="font-size:0.6rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;">Positions</div><div style="font-size:0.95rem;font-weight:700;color:#e2e8f0;">{len(strategy_df)}</div>', unsafe_allow_html=True)
+            sc3.markdown(f'<div style="font-size:0.6rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;">MTM P&L</div><div style="font-size:0.95rem;font-weight:700;color:{strat_mtm_c};">{strat_mtm_s}</div>', unsafe_allow_html=True)
             strat_margin = sum(
                 margin_map.get(str(r.get("trade_id","")), 0)
                 for _, r in strategy_df.iterrows()
@@ -1024,7 +1037,7 @@ with col_trades:
                     except: mtm_str = ""
 
                 is_editing = (st.session_state.edit_id == tid)
-                ci, cb2   = st.columns([3,1])
+                ci, cb2   = st.columns([4, 0.6])
 
                 # Per-position margin
                 pos_margin     = margin_map.get(tid, 0)
