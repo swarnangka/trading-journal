@@ -238,11 +238,15 @@ def write_instruments(rows):
 # ── SESSION STATE INIT ────────────────────────────────────────────────────────
 if "edit_id" not in st.session_state: st.session_state.edit_id = None
 
-# Load instruments into session on first load (one API call total)
+# Load instruments into session — reload if empty (handles post-upload case)
 if "_instruments_loaded" not in st.session_state:
     load_instruments_to_session()
 
-df_inst    = get_instruments()
+df_inst = get_instruments()
+# If loaded but empty, try once more (sheet may have been updated)
+if df_inst.empty and st.session_state.get("_instruments_loaded"):
+    load_instruments_to_session()
+    df_inst = get_instruments()
 inst_count = len(df_inst) if not df_inst.empty else 0
 inst_last  = df_inst["last_updated"].iloc[0] if (not df_inst.empty and "last_updated" in df_inst.columns) else ""
 
@@ -359,7 +363,14 @@ with col_form:
             qt_color = "#22c55e" if lot_size > 1 else "#ef4444"
             qc3.markdown(f'<div class="qty-box"><div class="qty-label">Total Qty</div><div class="qty-value" style="color:{qt_color};">{quantity:,} shares</div></div>', unsafe_allow_html=True)
             if lot_size == 1 and symbol:
-                st.markdown(f'<div class="warn-box">⚠️ <b>{symbol}</b> not found in {inst_count} loaded symbols. Upload fo_mktlots.csv above.</div>', unsafe_allow_html=True)
+                df_check = get_instruments()
+                loaded_count = len(df_check)
+                if loaded_count == 0:
+                    st.markdown(f'<div class="warn-box">⚠️ No instruments loaded yet. Upload fo_mktlots.csv above → click Update.</div>', unsafe_allow_html=True)
+                else:
+                    # Symbol genuinely not found — show first 5 loaded symbols for debug
+                    sample = df_check["symbol"].head(3).tolist() if "symbol" in df_check.columns else []
+                    st.markdown(f'<div class="warn-box">⚠️ <b>{symbol}</b> not in {loaded_count} symbols. Sample loaded: {", ".join(sample)}. Try clicking ↻ Refresh in open trades.</div>', unsafe_allow_html=True)
 
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -453,6 +464,11 @@ with col_trades:
     else:
         if "timestamp_entry" in df.columns:
             df = df.sort_values("timestamp_entry", ascending=False)
+
+        # Ensure instruments loaded before rendering lot sizes
+        df_inst_check = get_instruments()
+        if df_inst_check.empty:
+            load_instruments_to_session()
 
         # ── FETCH LTP + MARGIN FOR ALL POSITIONS (one batch) ──
         ltp_map           = {}
