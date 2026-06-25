@@ -193,21 +193,64 @@ def update_trade_field(trade_id, field, value):
 # ── INSTRUMENTS CSV PARSER ─────────────────────────────────────────────────────
 
 def parse_fo_csv(csv_text):
+    """
+    Parse NSE fo_mktlots.csv pasted as text.
+    Handles:
+      - Comma-separated (direct copy from .csv file in text editor)
+      - Tab-separated   (copy from Excel/Numbers)
+      - Space-separated (copy from some viewers)
+    Logic: col[0]=UNDERLYING, col[1]=SYMBOL, col[2]=nearest lot size
+    """
     rows = []
-    for row in csv.reader(io.StringIO(csv_text)):
-        if len(row) < 3:
+    for line in csv_text.splitlines():
+        line = line.strip()
+        if not line:
             continue
-        symbol  = row[1].strip()
-        lot_str = row[2].strip()
+
+        # Detect delimiter
+        if ',' in line:
+            parts = [p.strip() for p in line.split(',')]
+        elif '\t' in line:
+            parts = [p.strip() for p in line.split('\t')]
+        else:
+            # Space-separated: underlying name may have spaces
+            # SYMBOL is always a single uppercase word, lot is a number
+            # Strategy: find first numeric token — that's lot size
+            # token before it is SYMBOL, everything before that is UNDERLYING
+            tokens = line.split()
+            # Find first digit-only token
+            lot_idx = None
+            for i, t in enumerate(tokens):
+                if t.isdigit():
+                    lot_idx = i
+                    break
+            if lot_idx is None or lot_idx < 2:
+                continue
+            # SYMBOL is the token just before lot size
+            sym_idx = lot_idx - 1
+            parts = [
+                " ".join(tokens[:sym_idx]),   # UNDERLYING
+                tokens[sym_idx],               # SYMBOL
+                tokens[lot_idx],               # LOT SIZE
+            ]
+
+        if len(parts) < 3:
+            continue
+
+        underlying = parts[0].strip()
+        symbol     = parts[1].strip()
+        lot_str    = parts[2].strip()
+
         if not symbol or symbol.lower() in ("symbol", "underlying", ""):
             continue
         if not lot_str or not lot_str.isdigit():
             continue
-        if row[0].strip().lower().startswith("derivatives on individual"):
+        if underlying.lower().startswith("derivatives on individual"):
             continue
+
         rows.append({
             "symbol":          symbol,
-            "underlying":      row[0].strip(),
+            "underlying":      underlying,
             "lot_size":        int(lot_str),
             "exchange":        "NSE",
             "instrument_type": "FUT_OPT",
