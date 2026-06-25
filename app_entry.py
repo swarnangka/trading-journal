@@ -250,7 +250,16 @@ inst_last  = df_inst["last_updated"].iloc[0] if (not df_inst.empty and "last_upd
 # ══════════════════════════════════════════════════════════════════════════════
 # HEADER
 # ══════════════════════════════════════════════════════════════════════════════
-st.markdown('<div class="pb-header"><span class="pb-logo">⚡ ParabolicTrends</span><span class="pb-sub">Trade Entry</span></div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="pb-header">'
+    '<span style="font-size:1.3rem;font-weight:700;letter-spacing:0.02em;">'
+    '<span style="color:#ffffff;">Parabolic</span>'
+    '<span style="color:#7c6fcd;">Trends</span>'
+    '</span>'
+    '<span class="pb-sub" style="margin-left:16px;">Trade Entry</span>'
+    '</div>',
+    unsafe_allow_html=True
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -519,8 +528,13 @@ with col_trades:
 
         st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
-        # ── GROUP BY STRATEGY ──
-        strategies_in_trades = df["strategy"].unique() if "strategy" in df.columns else []
+        # ── GROUP BY STRATEGY — fixed order ──
+        STRATEGY_ORDER = ["TREND", "COMMODITIES", "MOMENTUM"]
+        all_strats = df["strategy"].unique().tolist() if "strategy" in df.columns else []
+        # Put known strategies first in order, then any others alphabetically
+        ordered = [s for s in STRATEGY_ORDER if s in all_strats]
+        others  = sorted([s for s in all_strats if s not in STRATEGY_ORDER])
+        strategies_in_trades = ordered + others
 
         for strategy_name in strategies_in_trades:
             strategy_df = df[df["strategy"] == strategy_name].copy()
