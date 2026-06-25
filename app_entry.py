@@ -633,21 +633,83 @@ with col_trades:
         m1,m2,m3,m4 = st.columns(4)
         m1.markdown(f'<div class="stat-box"><div class="stat-label">Positions</div><div class="stat-value" style="color:#e2e8f0">{len(df)}</div><div class="stat-sub">{len(df[df["action"].str.upper()=="BUY"])}L · {len(df[df["action"].str.upper()=="SELL"])}S</div></div>', unsafe_allow_html=True)
         m2.markdown(f'<div class="stat-box"><div class="stat-label">Total MTM</div><div class="stat-value" style="color:{tm_c}">{tm_s}</div><div class="stat-sub">{"live" if ltp_map else "needs AngelOne"}</div></div>', unsafe_allow_html=True)
-        m3.markdown(f'<div class="stat-box"><div class="stat-label">Margin Used</div><div class="stat-value" style="color:{mg_c}">{mg_s} {mg_p}</div><div class="stat-sub">{"of ₹"+str(int(total_capital//100000))+"L capital" if total_capital>0 else "SPAN via AngelOne"}</div></div>', unsafe_allow_html=True)
-        m4.markdown(f'<div class="stat-box"><div class="stat-label">Capital Free</div><div class="stat-value" style="color:#e2e8f0">{cr_s}</div><div class="stat-sub">{"remaining" if cr_s != "—" else "add AngelOne"}</div></div>', unsafe_allow_html=True)
+        m3.markdown(f'<div class="stat-box"><div class="stat-label">Margin Utilised</div><div class="stat-value" style="color:{mg_c}">{mg_s} {mg_p}</div><div class="stat-sub">{"of ₹"+str(int(total_capital//100000))+"L allocated" if total_capital>0 else "SPAN estimated"}</div></div>', unsafe_allow_html=True)
+        m4.markdown(f'<div class="stat-box"><div class="stat-label">Margin Remaining</div><div class="stat-value" style="color:#e2e8f0">{cr_s}</div><div class="stat-sub">{"of total capital" if cr_s != "—" else "needs AngelOne creds"}</div></div>', unsafe_allow_html=True)
 
         st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
+        # ── NET POSITIONS — BUY vs SELL per symbol group ──
+        # Group by: strategy + symbol + expiry + strike + option_type
+        # Net lots: BUY = positive, SELL = negative
+        # Net = 0 → fully closed (exclude from display)
+        # Net > 0 → net LONG with net lots
+        # Net < 0 → net SHORT with net lots
+        
+        def net_positions(trades_df):
+            """Net BUY and SELL trades, return only open net positions."""
+            if trades_df.empty:
+                return trades_df
+            
+            group_cols = ["strategy","symbol","instrument","expiry","strike","option_type"]
+            available  = [c for c in group_cols if c in trades_df.columns]
+            
+            net_rows = []
+            for key, grp in trades_df.groupby(available, dropna=False):
+                net_lots = 0.0
+                net_qty  = 0.0
+                avg_buy_px  = 0.0
+                avg_sell_px = 0.0
+                buy_qty = 0.0
+                sell_qty = 0.0
+                latest_row = grp.sort_values("timestamp_entry", ascending=False).iloc[0].copy() if "timestamp_entry" in grp.columns else grp.iloc[0].copy()
+
+                for _, row in grp.iterrows():
+                    act  = str(row.get("action","BUY")).upper()
+                    lots = float(row.get("lots_qty", row.get("quantity",0)) or 0)
+                    px   = float(row.get("price",0) or 0)
+                    cur_ls = get_lot_size(str(row.get("symbol","")))
+                    qty  = lots * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
+                    
+                    if act == "BUY":
+                        net_lots += lots
+                        net_qty  += qty
+                        avg_buy_px = ((avg_buy_px * buy_qty) + (px * qty)) / (buy_qty + qty) if (buy_qty + qty) > 0 else px
+                        buy_qty  += qty
+                    else:
+                        net_lots -= lots
+                        net_qty  -= qty
+                        avg_sell_px = ((avg_sell_px * sell_qty) + (px * qty)) / (sell_qty + qty) if (sell_qty + qty) > 0 else px
+                        sell_qty += qty
+
+                # Skip fully closed positions
+                if abs(net_lots) < 0.01:
+                    continue
+
+                # Build net position row
+                net_row = latest_row.copy()
+                net_row["lots_qty"]  = abs(net_lots)
+                net_row["quantity"]  = abs(net_qty)
+                net_row["action"]    = "BUY" if net_lots > 0 else "SELL"
+                net_row["price"]     = avg_buy_px if net_lots > 0 else avg_sell_px
+                net_row["_net_lots"] = abs(net_lots)
+                net_rows.append(net_row)
+            
+            if not net_rows:
+                return pd.DataFrame()
+            return pd.DataFrame(net_rows)
+
+        # Apply netting per strategy
+        df_display = net_positions(df)
+
         # ── GROUP BY STRATEGY — fixed order ──
         STRATEGY_ORDER = ["TREND", "COMMODITIES", "MOMENTUM"]
-        all_strats = df["strategy"].unique().tolist() if "strategy" in df.columns else []
-        # Put known strategies first in order, then any others alphabetically
+        all_strats = df_display["strategy"].unique().tolist() if (not df_display.empty and "strategy" in df_display.columns) else []
         ordered = [s for s in STRATEGY_ORDER if s in all_strats]
         others  = sorted([s for s in all_strats if s not in STRATEGY_ORDER])
         strategies_in_trades = ordered + others
 
         for strategy_name in strategies_in_trades:
-            strategy_df = df[df["strategy"] == strategy_name].copy()
+            strategy_df = df_display[df_display["strategy"] == strategy_name].copy()
 
             # Strategy MTM
             strat_mtm = 0.0
@@ -677,9 +739,29 @@ with col_trades:
                 margin_map.get(str(r.get("trade_id","")), 0)
                 for _, r in strategy_df.iterrows()
             )
-            strat_mg_s = f"₹{strat_margin/100000:.1f}L" if strat_margin > 0 else "—"
-            strat_mg_c = "#22c55e" if strat_margin > 0 else "#475569"
-            sc4.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Margin</div><div style="font-size:0.9rem;font-weight:600;color:{strat_mg_c};">{strat_mg_s}</div>', unsafe_allow_html=True)
+            # Get allocated capital for this strategy
+            strat_alloc = 0
+            try:
+                df_st = read_strategies()
+                if not df_st.empty and "strategy_name" in df_st.columns and "allocated_capital" in df_st.columns:
+                    st_row = df_st[df_st["strategy_name"] == strategy_name]
+                    if not st_row.empty:
+                        cap_str = str(st_row.iloc[0]["allocated_capital"]).replace("L","").replace("l","").strip()
+                        cv = float(cap_str)
+                        strat_alloc = cv * 100000 if cv < 10000 else cv
+            except: pass
+            
+            strat_mg_s   = f"₹{strat_margin/100000:.1f}L" if strat_margin > 0 else "—"
+            strat_rem    = strat_alloc - strat_margin if strat_alloc > 0 and strat_margin > 0 else None
+            strat_rem_s  = f"₹{strat_rem/100000:.1f}L free" if strat_rem is not None else ""
+            strat_mg_c   = "#22c55e" if (strat_rem is not None and strat_rem > 0) else ("#eab308" if strat_margin > 0 else "#475569")
+            sc4.markdown(
+                f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Utilised · Remaining</div>'
+                f'<div style="font-size:0.85rem;font-weight:600;color:{strat_mg_c};">'
+                f'{strat_mg_s}{" · <span style=\"color:#22c55e\">" + strat_rem_s + "</span>" if strat_rem_s else ""}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
             sc5.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Today</div><div style="font-size:0.9rem;font-weight:600;color:#f97316;">{strat_today}</div>', unsafe_allow_html=True)
 
             st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
@@ -752,18 +834,13 @@ with col_trades:
                     )
 
                 with cb2:
-                    b1, b2, b3 = st.columns(3)
+                    b1, b2 = st.columns(2)
                     if b1.button("✏", key=f"e_{tid}", help="Edit"):
                         st.session_state.edit_id = None if is_editing else tid
-                        st.session_state.pop(f"close_{tid}", None)
                         st.rerun()
-                    if b2.button("⊗", key=f"c_{tid}", help="Close trade"):
-                        st.session_state[f"close_{tid}"] = not st.session_state.get(f"close_{tid}", False)
+                    if b2.button("✕", key=f"d_{tid}", help="Delete"):
+                        soft_delete(tid)
                         st.session_state.edit_id = None
-                        st.rerun()
-                    if b3.button("✕", key=f"d_{tid}", help="Delete"):
-                        soft_delete(tid); st.session_state.edit_id=None
-                        st.session_state.pop(f"close_{tid}", None)
                         st.rerun()
 
                 if is_editing:
@@ -788,59 +865,7 @@ with col_trades:
                         st.session_state.edit_id=None; st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
 
-                # ── CLOSE TRADE PANEL ──
-                if st.session_state.get(f"close_{tid}", False):
-                    st.markdown('<div class="edit-panel" style="border-color:#ef444440;">', unsafe_allow_html=True)
-                    st.markdown('<div style="font-size:0.7rem;color:#ef4444;font-weight:600;letter-spacing:0.1em;margin-bottom:8px;">CLOSE POSITION</div>', unsafe_allow_html=True)
-                    ca, cb_close = st.columns(2)
-                    # Pre-fill with LTP if available
-                    ltp_prefill = float(ltp_map.get(sym, 0)) if ltp_map.get(sym) else (float(pv) if pv else 0.0)
-                    close_px = ca.number_input(
-                        "Exit Price ₹", min_value=0.0, step=0.05, format="%.2f",
-                        value=ltp_prefill, key=f"cpx_{tid}"
-                    )
-                    close_dt = cb_close.date_input("Exit Date", value=now_ist().date(), key=f"cdt_{tid}")
-                    # P&L preview
-                    try:
-                        ep      = float(pv)
-                        cur_ls  = get_lot_size(sym)
-                        c_lots  = float(lv) if str(lv).replace(".","").isdigit() else 0
-                        c_qty   = c_lots * cur_ls if cur_ls > 1 else float(qv or 0)
-                        c_pnl   = (close_px - ep) * c_qty if act.upper()=="BUY" else (ep - close_px) * c_qty
-                        pc      = "#22c55e" if c_pnl >= 0 else "#ef4444"
-                        sign    = "+" if c_pnl >= 0 else ""
-                        st.markdown(
-                            f'<div style="font-size:0.82rem;margin:6px 0 10px 0;">'
-                            f'Closing {c_lots:.0f} lots × {cur_ls} = {c_qty:,.0f} sh &nbsp;·&nbsp; '
-                            f'<span style="color:{pc};font-weight:700">{sign}₹{abs(c_pnl):,.0f}</span></div>',
-                            unsafe_allow_html=True
-                        )
-                    except: pass
-                    cs1, cs2 = st.columns(2)
-                    if cs1.button("✓ Confirm Close", key=f"cf_{tid}"):
-                        trade_dict = {
-                            "trade_id":   tid,
-                            "action":     act,
-                            "price":      pv,
-                            "lots_qty":   lv,
-                            "quantity":   qv,
-                            "symbol":     sym,
-                            "strategy":   strategy_name,
-                            "exchange":   str(row.get("exchange","NSE")),
-                            "instrument": instr,
-                            "expiry":     exp_v,
-                            "strike":     stk_v,
-                            "option_type":opt_v,
-                            "trade_date": dt_v,
-                        }
-                        ok_close = close_trade_fast(trade_dict, close_px, str(close_dt))
-                        if ok_close:
-                            st.session_state.pop(f"close_{tid}", None)
-                            st.rerun()
-                    if cs2.button("Cancel", key=f"ccancel_{tid}"):
-                        st.session_state.pop(f"close_{tid}", None)
-                        st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
+
 
             # Spacing between strategy groups
             st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
