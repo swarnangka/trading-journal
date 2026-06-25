@@ -261,7 +261,13 @@ def parse_fo_csv(csv_text):
 def write_instruments(parsed_rows):
     try:
         ws = get_ws(TAB_INSTRUMENTS)
-        ws.resize(rows=1)
+        # Clear all data rows safely (never touches row 1 header)
+        all_values = ws.get_all_values()
+        if len(all_values) > 1:
+            # Clear from row 2 to last row
+            last_row = len(all_values)
+            ws.batch_clear([f"A2:Z{last_row}"])
+        # Write new data
         data = [[r["symbol"], r["underlying"], r["lot_size"],
                  r["exchange"], r["instrument_type"], r["last_updated"]]
                 for r in parsed_rows]
@@ -312,20 +318,32 @@ st.markdown("""
 
 
 # ── INSTRUMENTS UPDATER ────────────────────────────────────────────────────────
-with st.expander("🔧 Update F&O Lot Sizes  —  paste NSE fo_mktlots.csv here"):
+with st.expander("🔧 Update F&O Lot Sizes  —  upload or paste NSE fo_mktlots.csv"):
     st.markdown(
         '<div style="font-size:0.78rem;color:#64748b;margin-bottom:10px;">'
-        'Download <code>fo_mktlots.csv</code> from NSE → open in any text editor → '
-        'Select All → Copy → paste below → click Update.</div>',
+        'Upload <code>fo_mktlots.csv</code> directly (easiest), '
+        'or paste its text contents below.</div>',
         unsafe_allow_html=True
     )
-    csv_text = st.text_area("CSV content", height=100,
+
+    uploaded_file = st.file_uploader(
+        "Upload fo_mktlots.csv", type=["csv"],
+        label_visibility="collapsed"
+    )
+    csv_text = st.text_area("Or paste CSV text here", height=80,
                              placeholder="UNDERLYING,SYMBOL,JUN-26,...",
                              label_visibility="collapsed")
+
     ca, cb = st.columns([1, 4])
     if ca.button("⬆ Update Instruments"):
-        if csv_text.strip():
-            parsed = parse_fo_csv(csv_text)
+        raw_text = ""
+        if uploaded_file is not None:
+            raw_text = uploaded_file.read().decode("utf-8", errors="replace")
+        elif csv_text.strip():
+            raw_text = csv_text
+
+        if raw_text:
+            parsed = parse_fo_csv(raw_text)
             if parsed:
                 ok, msg = write_instruments(parsed)
                 st.markdown(
@@ -333,9 +351,9 @@ with st.expander("🔧 Update F&O Lot Sizes  —  paste NSE fo_mktlots.csv here"
                     unsafe_allow_html=True
                 )
             else:
-                st.markdown('<div class="warn-box">⚠️ No valid rows found — check CSV format.</div>', unsafe_allow_html=True)
+                st.markdown('<div class="warn-box">⚠️ No valid rows found — check the file.</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="warn-box">⚠️ Paste CSV content first.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="warn-box">⚠️ Upload a file or paste CSV content first.</div>', unsafe_allow_html=True)
 
     df_inst = read_instruments()
     if not df_inst.empty:
@@ -345,7 +363,6 @@ with st.expander("🔧 Update F&O Lot Sizes  —  paste NSE fo_mktlots.csv here"
             f'{len(df_inst)} symbols loaded · updated {last}</div>',
             unsafe_allow_html=True
         )
-
 st.markdown("<div class='pb-divider'></div>", unsafe_allow_html=True)
 
 
