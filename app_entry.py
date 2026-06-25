@@ -182,6 +182,76 @@ def soft_delete(trade_id):
     except Exception as e:
         st.error(f"Delete error: {e}"); return False
 
+def close_trade(trade_id: str, close_price: float, close_date: str) -> bool:
+    """
+    Close an open trade:
+    1. Mark original trade as is_deleted=TRUE in TRADES tab
+    2. Write closing entry to CLOSED_TRADES tab with P&L
+    """
+    try:
+        ws      = get_ws(TAB_TRADES)
+        headers = ws.row_values(1)
+        ti      = headers.index("trade_id") + 1
+        rows    = ws.get_all_values()
+
+        # Find the trade row
+        trade_row = None
+        row_idx   = None
+        for i, row in enumerate(rows[1:], start=2):
+            if len(row) >= ti and row[ti-1] == str(trade_id):
+                trade_row = dict(zip(headers, row))
+                row_idx   = i
+                break
+
+        if not trade_row:
+            return False
+
+        # Mark as deleted in TRADES
+        di = headers.index("is_deleted") + 1
+        ws.update_cell(row_idx, di, "TRUE")
+
+        # Write to CLOSED_TRADES
+        ws_closed = get_ws(TAB_CLOSED)
+        c_headers = ws_closed.row_values(1)
+
+        action    = str(trade_row.get("action","BUY")).upper()
+        entry_px  = float(trade_row.get("price", 0) or 0)
+        qty       = float(trade_row.get("quantity", 0) or 0)
+        lots      = float(trade_row.get("lots_qty", 0) or 0)
+        lot_size  = get_lot_size(str(trade_row.get("symbol","")))
+        # Use current lot size if stored qty looks wrong
+        if lot_size > 1 and lots > 0:
+            qty = lots * lot_size
+
+        gross_pnl = (close_price - entry_px) * qty if action == "BUY" else (entry_px - close_price) * qty
+
+        closed_row = {
+            "trade_id":         trade_row.get("trade_id",""),
+            "strategy":         trade_row.get("strategy",""),
+            "symbol":           trade_row.get("symbol",""),
+            "exchange":         trade_row.get("exchange",""),
+            "instrument":       trade_row.get("instrument",""),
+            "expiry":           trade_row.get("expiry",""),
+            "strike":           trade_row.get("strike",""),
+            "option_type":      trade_row.get("option_type",""),
+            "direction":        action,
+            "entry_date":       trade_row.get("trade_date",""),
+            "exit_date":        close_date,
+            "lots_qty":         lots,
+            "quantity":         qty,
+            "avg_entry_price":  entry_px,
+            "exit_price":       close_price,
+            "gross_pnl":        round(gross_pnl, 2),
+        }
+        row_data = [str(closed_row.get(h,"")) for h in c_headers]
+        ws_closed.append_row(row_data, value_input_option="USER_ENTERED")
+        read_trades.clear()
+        return True
+    except Exception as e:
+        st.error(f"Close error: {e}")
+        return False
+
+
 def update_field(trade_id, field, value):
     try:
         ws = get_ws(TAB_TRADES)
@@ -445,7 +515,12 @@ with col_form:
                 })
                 if ok:
                     qty_desc = f"{lots} lots ({quantity:,} sh)" if instrument!="CASH" else f"{int(quantity):,} shares"
-                    st.markdown(f'<div class="success-box">✅ {action} {symbol} — {qty_desc} @ {fmt_px(price)}</div>', unsafe_allow_html=True)
+                    st.markdown(
+                        f'<div class="success-box">✅ {action} {symbol} — {qty_desc} @ {fmt_px(price)}<br>'
+                        f'<span style="font-size:0.72rem;opacity:0.8;">'
+                        f'Adding to existing position? Both entries show separately — total qty combines in dashboard.</span></div>',
+                        unsafe_allow_html=True
+                    )
 
 
 # ══════════════════════════════════════════════════════
@@ -517,17 +592,21 @@ with col_trades:
                     mdata = fetch_margin_for_positions(positions_for_margin)
                     total_margin_used = float(mdata.get("_total_required", 0))
 
-                # Fallback: if SPAN API returns 0, estimate from LTP × qty × margin_pct
-                if total_margin_used == 0 and ltp_map:
-                    for _, row in df.iterrows():
-                        sym   = str(row.get("symbol",""))
-                        instr = str(row.get("instrument","FUT"))
-                        qty   = float(row.get("quantity",0) or 0)
-                        if sym in ltp_map and instr.upper() != "CASH":
-                            ltp       = ltp_map[sym]
-                            # NSE equity FUT SPAN ~15%, index ~12%, OPT = premium paid
-                            pct = 0.12 if instr.upper()=="OPT" else 0.15
-                            total_margin_used += ltp * qty * pct
+                # Fallback: estimate margin from LTP × CORRECT qty × margin_pct
+                # Always run fallback (SPAN API not reliable from Streamlit Cloud)
+                est_margin = 0.0
+                for _, row in df.iterrows():
+                    sym   = str(row.get("symbol",""))
+                    instr = str(row.get("instrument","FUT"))
+                    lots  = float(row.get("lots_qty", row.get("quantity",0)) or 0)
+                    if sym in ltp_map and instr.upper() != "CASH":
+                        ltp      = ltp_map[sym]
+                        cur_ls   = get_lot_size(sym)  # current lot size from instruments
+                        cur_qty  = lots * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
+                        pct      = 0.12 if instr.upper()=="OPT" else 0.15
+                        est_margin += ltp * cur_qty * pct
+                if est_margin > 0:
+                    total_margin_used = est_margin
 
         except Exception:
             pass
@@ -674,12 +753,19 @@ with col_trades:
                     )
 
                 with cb2:
-                    b1,b2 = st.columns(2)
-                    if b1.button("✏", key=f"e_{tid}"):
+                    b1, b2, b3 = st.columns(3)
+                    if b1.button("✏", key=f"e_{tid}", help="Edit"):
                         st.session_state.edit_id = None if is_editing else tid
+                        st.session_state.pop(f"close_{tid}", None)
                         st.rerun()
-                    if b2.button("✕", key=f"d_{tid}"):
-                        soft_delete(tid); st.session_state.edit_id=None; st.rerun()
+                    if b2.button("⊗", key=f"c_{tid}", help="Close trade"):
+                        st.session_state[f"close_{tid}"] = not st.session_state.get(f"close_{tid}", False)
+                        st.session_state.edit_id = None
+                        st.rerun()
+                    if b3.button("✕", key=f"d_{tid}", help="Delete"):
+                        soft_delete(tid); st.session_state.edit_id=None
+                        st.session_state.pop(f"close_{tid}", None)
+                        st.rerun()
 
                 if is_editing:
                     st.markdown('<div class="edit-panel">', unsafe_allow_html=True)
@@ -701,6 +787,45 @@ with col_trades:
                         st.session_state.edit_id=None; st.rerun()
                     if s2.button("Cancel", key=f"cx_{tid}"):
                         st.session_state.edit_id=None; st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                # ── CLOSE TRADE PANEL ──
+                if st.session_state.get(f"close_{tid}", False):
+                    st.markdown('<div class="edit-panel" style="border-color:#ef444440;">', unsafe_allow_html=True)
+                    st.markdown('<div style="font-size:0.7rem;color:#ef4444;font-weight:600;letter-spacing:0.1em;margin-bottom:8px;">CLOSE POSITION</div>', unsafe_allow_html=True)
+                    ca, cb_close = st.columns(2)
+                    # Pre-fill with LTP if available
+                    ltp_prefill = float(ltp_map.get(sym, 0)) if ltp_map.get(sym) else (float(pv) if pv else 0.0)
+                    close_px = ca.number_input(
+                        "Exit Price ₹", min_value=0.0, step=0.05, format="%.2f",
+                        value=ltp_prefill, key=f"cpx_{tid}"
+                    )
+                    close_dt = cb_close.date_input("Exit Date", value=now_ist().date(), key=f"cdt_{tid}")
+                    # P&L preview
+                    try:
+                        ep      = float(pv)
+                        cur_ls  = get_lot_size(sym)
+                        c_lots  = float(lv) if str(lv).replace(".","").isdigit() else 0
+                        c_qty   = c_lots * cur_ls if cur_ls > 1 else float(qv or 0)
+                        c_pnl   = (close_px - ep) * c_qty if act.upper()=="BUY" else (ep - close_px) * c_qty
+                        pc      = "#22c55e" if c_pnl >= 0 else "#ef4444"
+                        sign    = "+" if c_pnl >= 0 else ""
+                        st.markdown(
+                            f'<div style="font-size:0.82rem;margin:6px 0 10px 0;">'
+                            f'Closing {c_lots:.0f} lots × {cur_ls} = {c_qty:,.0f} sh &nbsp;·&nbsp; '
+                            f'<span style="color:{pc};font-weight:700">{sign}₹{abs(c_pnl):,.0f}</span></div>',
+                            unsafe_allow_html=True
+                        )
+                    except: pass
+                    cs1, cs2 = st.columns(2)
+                    if cs1.button("✓ Confirm Close", key=f"cf_{tid}"):
+                        ok_close = close_trade(tid, close_px, str(close_dt))
+                        if ok_close:
+                            st.session_state.pop(f"close_{tid}", None)
+                            st.rerun()
+                    if cs2.button("Cancel", key=f"ccancel_{tid}"):
+                        st.session_state.pop(f"close_{tid}", None)
+                        st.rerun()
                     st.markdown('</div>', unsafe_allow_html=True)
 
             # Spacing between strategy groups
