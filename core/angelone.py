@@ -85,75 +85,56 @@ def get_instrument_master() -> pd.DataFrame:
     return pd.DataFrame()
 
 
-def find_token(symbol: str, exchange: str, instrument: str, expiry: str = "", strike: float = 0, opt_type: str = "") -> str:
+def find_token(symbol: str, exchange: str, instrument: str, expiry: str = "", strike: float = 0, opt_type: str = "") -> tuple:
     """
-    Find AngelOne token for a given symbol.
-    Uses instrument master — no API call per symbol.
-    
-    For FUT: match symbol + expiry + "FUT" in tradingsymbol
-    For OPT: match symbol + expiry + strike + CE/PE
-    For CASH: direct NSE equity lookup
+    Find AngelOne token + tradingsymbol for a given symbol.
+    Returns (token, tradingsymbol) or ("", "").
     """
     try:
-        if instrument == "CASH":
-            # For cash equity — simple approach
-            obj  = get_angel_obj()
-            if not obj: return ""
-            resp = obj.searchScrip("NSE", symbol)
-            if resp and resp.get("data"):
-                for item in resp["data"]:
-                    ts = item.get("tradingsymbol","")
-                    if ts.upper() == symbol.upper() + "-EQ" or ts.upper() == symbol.upper():
-                        return str(item.get("symboltoken",""))
-            return ""
-
         df = get_instrument_master()
-        if df.empty: return ""
+        if df.empty: return "", ""
 
-        # Filter by base symbol
+        # Filter by base symbol name
         mask = df["name"].str.upper() == symbol.upper()
         sub  = df[mask]
         if sub.empty:
-            # Try symbol column
             mask = df["symbol"].str.upper().str.startswith(symbol.upper())
             sub  = df[mask]
-        if sub.empty: return ""
+        if sub.empty: return "", ""
 
         # Filter by instrument type
-        if instrument == "FUT":
-            sub = sub[sub["instrumenttype"].str.upper() == "FUTSTK"]
-            if sub.empty:
-                sub = df[mask][df[mask]["instrumenttype"].str.upper() == "FUTIDX"]
-        elif instrument == "OPT":
-            sub = sub[sub["instrumenttype"].str.upper().isin(["OPTSTK","OPTIDX"])]
+        if instrument.upper() == "FUT":
+            sub2 = sub[sub["instrumenttype"].str.upper().isin(["FUTSTK","FUTIDX"])]
+            if not sub2.empty: sub = sub2
+        elif instrument.upper() == "OPT":
+            sub2 = sub[sub["instrumenttype"].str.upper().isin(["OPTSTK","OPTIDX"])]
+            if not sub2.empty: sub = sub2
             if opt_type:
-                sub = sub[sub["symbol"].str.upper().str.endswith(opt_type.upper())]
+                sub3 = sub[sub["symbol"].str.upper().str.endswith(opt_type.upper())]
+                if not sub3.empty: sub = sub3
             if strike > 0:
-                sub = sub[sub["strike"] == strike * 100]  # AngelOne stores strike * 100
+                sub3 = sub[sub["strike"] == strike * 100]
+                if not sub3.empty: sub = sub3
 
-        if sub.empty: return ""
+        if sub.empty: return "", ""
 
-        # Match expiry if provided
+        # Match expiry
         if expiry:
-            # expiry format from our app: "JUN-26" — AngelOne format: "25JUN2026" or "2026-06-26"
             try:
                 exp_dt = datetime.strptime(expiry, "%b-%y")
-                exp_month = exp_dt.month
-                exp_year  = exp_dt.year
                 sub2 = sub[
-                    sub["expiry"].str.contains(str(exp_year), na=False) &
+                    sub["expiry"].str.contains(str(exp_dt.year), na=False) &
                     sub["expiry"].str.upper().str.contains(exp_dt.strftime("%b").upper(), na=False)
                 ]
-                if not sub2.empty:
-                    sub = sub2
+                if not sub2.empty: sub = sub2
             except Exception:
                 pass
 
-        # Return token of first match
-        return str(sub.iloc[0]["token"])
+        row = sub.iloc[0]
+        return str(row["token"]), str(row.get("symbol",""))
 
     except Exception:
-        return ""
+        return "", ""
 
 
 # ── LTP ────────────────────────────────────────────────────────────────────────
@@ -193,7 +174,13 @@ def fetch_current_ltp(symbol: str, exchange: str, token: str) -> tuple:
 
 def get_symbol_token(symbol: str, exchange: str, instrument: str,
                      expiry: str = "", strike: float = 0, opt_type: str = "") -> str:
-    """Public wrapper — find token from instrument master."""
+    """Public wrapper — returns just the token string."""
+    token, _ = find_token(symbol, exchange, instrument, expiry, strike, opt_type)
+    return token
+
+def get_symbol_token_and_ts(symbol: str, exchange: str, instrument: str,
+                             expiry: str = "", strike: float = 0, opt_type: str = "") -> tuple:
+    """Returns (token, tradingsymbol) tuple."""
     return find_token(symbol, exchange, instrument, expiry, strike, opt_type)
 
 
@@ -208,14 +195,33 @@ def fetch_margin_for_positions(positions: list) -> dict:
         for pos in positions:
             token = pos.get("token","")
             instr = pos.get("instrument","FUT").upper()
-            if not token or instr == "CASH": continue
+            if instr == "CASH": continue
+            # If no token, try to fetch it now
+            if not token:
+                token, ts = find_token(
+                    pos.get("symbol",""),
+                    pos.get("exchange","NSE"),
+                    instr,
+                    pos.get("expiry",""),
+                )
+            else:
+                _, ts = find_token(
+                    pos.get("symbol",""),
+                    pos.get("exchange","NSE"),
+                    instr,
+                    pos.get("expiry",""),
+                )
+            if not token: continue
+            # Use actual trading symbol from master, fall back to base symbol
+            trading_sym = ts if ts else pos.get("symbol","")
+            exch = "NFO" if pos.get("exchange","NSE").upper() in ("NSE","NFO") else pos.get("exchange","NSE").upper()
             orders.append({
-                "exchange":        "NFO" if pos.get("exchange","NSE").upper()=="NSE" else pos.get("exchange","NSE").upper(),
-                "tradingsymbol":   pos.get("symbol",""),
+                "exchange":        exch,
+                "tradingsymbol":   trading_sym,
                 "symboltoken":     token,
                 "producttype":     "CARRYFORWARD",
                 "transactiontype": "BUY",
-                "quantity":        str(int(pos.get("quantity",0))),
+                "quantity":        str(max(1, int(pos.get("quantity",1)))),
                 "price":           str(pos.get("avg_entry_price",0)),
                 "tradedsquareoff": "0",
             })
