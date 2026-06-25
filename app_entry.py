@@ -241,66 +241,65 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
                           lots_to_close: int, close_price: float, close_date: str,
                           strategy: str, lot_size: int) -> tuple:
     """
-    Process a closure trade:
-    1. Find matching open position(s) — opposite action, same symbol/expiry/strike
-    2. Calculate P&L
-    3. Mark original trade(s) as deleted (fully closed) or update qty (partial)
-    4. Write to CLOSED_TRADES tab
-    5. Write closure trade to TRADES tab for audit trail
-    Returns (success, message)
+    Process a closure trade — modifies Google Sheet directly.
+    FIFO: closes oldest matching open trade first.
+    Writes P&L record to CLOSED_TRADES tab.
     """
     try:
         ws      = get_ws(TAB_TRADES)
         headers = ws.row_values(1)
-        
-        # Get all open trades
+        col     = {h: i+1 for i, h in enumerate(headers)}  # 1-indexed col numbers
+
+        # Read all rows fresh (bypass cache)
         all_data = ws.get_all_values()
         if len(all_data) < 2:
-            return False, "No open trades found."
-        
-        col = {h: i for i, h in enumerate(headers)}
-        
-        # Original action is opposite of close action
+            return False, "No open trades found in sheet."
+
+        # Opposite action = what we're closing
         orig_action = "BUY" if close_action.upper() == "SELL" else "SELL"
-        
-        # Find matching open trades (not deleted, same symbol/expiry/strike)
+
+        # Find matching open trades (not deleted)
         matching = []
         for i, row in enumerate(all_data[1:], start=2):
-            if len(row) < len(headers): continue
+            if len(row) < 5: continue
             d = dict(zip(headers, row))
             if d.get("is_deleted","").upper() == "TRUE": continue
-            if d.get("symbol","").upper() != symbol.upper(): continue
+            if d.get("symbol","").upper().strip() != symbol.upper().strip(): continue
             if d.get("action","").upper() != orig_action: continue
             if instrument and d.get("instrument","").upper() != instrument.upper(): continue
             if expiry and d.get("expiry","").upper() != expiry.upper(): continue
-            if strike and str(strike) not in ("","0") and d.get("strike","") not in ("","0"):
-                if str(d.get("strike","")).strip() != str(strike).strip(): continue
+            # Only match strike for options
             if opt_type and d.get("option_type","").upper() != opt_type.upper(): continue
-            matching.append((i, d))
-        
+            if strike and strike not in ("","0") and d.get("strike","") not in ("","0"):
+                if str(d.get("strike","")).strip() != str(strike).strip(): continue
+            try:
+                open_lots = float(d.get("lots_qty",0) or 0)
+            except: open_lots = 0
+            if open_lots <= 0: continue
+            matching.append((i, d, open_lots))
+
         if not matching:
-            return False, f"No open {orig_action} position found for {symbol} {expiry}."
-        
-        # Process oldest first (FIFO)
+            return False, f"No open {orig_action} position found for {symbol} {expiry}. Check symbol/expiry match."
+
+        # FIFO — oldest first
         matching.sort(key=lambda x: x[1].get("timestamp_entry",""))
-        
-        remaining_to_close = lots_to_close
-        closed_pnl         = 0.0
-        ws_closed          = get_ws(TAB_CLOSED)
-        c_headers          = ws_closed.row_values(1)
-        
-        for row_idx, trade in matching:
-            if remaining_to_close <= 0: break
-            
-            open_lots = float(trade.get("lots_qty", trade.get("quantity",0)) or 0)
-            lots_this = min(remaining_to_close, open_lots)
+
+        remaining     = lots_to_close
+        total_pnl     = 0.0
+        ws_closed     = get_ws(TAB_CLOSED)
+        c_headers     = ws_closed.row_values(1)
+        closed_records = []
+
+        for row_idx, trade, open_lots in matching:
+            if remaining <= 0: break
+
+            lots_this = min(remaining, open_lots)
             qty_this  = lots_this * lot_size
-            
             entry_px  = float(trade.get("price",0) or 0)
-            pnl       = (close_price - entry_px) * qty_this if orig_action == "BUY" else (entry_px - close_price) * qty_this
-            closed_pnl += pnl
-            
-            # Write to CLOSED_TRADES
+            pnl       = (close_price - entry_px)*qty_this if orig_action=="BUY" else (entry_px - close_price)*qty_this
+            total_pnl += pnl
+
+            # Write P&L record to CLOSED_TRADES
             closed = {
                 "trade_id":        trade.get("trade_id",""),
                 "strategy":        strategy,
@@ -319,32 +318,32 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
                 "exit_price":      close_price,
                 "gross_pnl":       round(pnl, 2),
             }
-            ws_closed.append_row(
-                [str(closed.get(h,"")) for h in c_headers],
-                value_input_option="USER_ENTERED"
-            )
-            
-            di = col.get("is_deleted", -1) + 1
-            lq = col.get("lots_qty", -1) + 1
-            qq = col.get("quantity", -1) + 1
-            
-            if lots_this >= open_lots:
-                # Fully closed — mark as deleted
-                if di > 0:
-                    ws.update_cell(row_idx, di, "TRUE")
+            closed_records.append([str(closed.get(h,"")) for h in c_headers])
+
+            # Update TRADES tab — reduce qty or mark deleted
+            di = col.get("is_deleted", 0)
+            lq = col.get("lots_qty", 0)
+            qq = col.get("quantity", 0)
+
+            if lots_this >= open_lots - 0.001:
+                # Fully closed — mark deleted
+                if di: ws.update_cell(row_idx, di, "TRUE")
             else:
                 # Partially closed — reduce qty
-                remaining_lots = open_lots - lots_this
-                remaining_qty  = remaining_lots * lot_size
-                if lq > 0: ws.update_cell(row_idx, lq, remaining_lots)
-                if qq > 0: ws.update_cell(row_idx, qq, remaining_qty)
-            
-            remaining_to_close -= lots_this
-        
-        # Also record the closure trade in TRADES tab for full audit trail
-        new_tid = generate_trade_id()
-        row_data = {
-            "trade_id":        new_tid,
+                rem_lots = open_lots - lots_this
+                rem_qty  = rem_lots * lot_size
+                if lq: ws.update_cell(row_idx, lq, str(rem_lots))
+                if qq: ws.update_cell(row_idx, qq, str(int(rem_qty)))
+
+            remaining -= lots_this
+
+        # Batch write CLOSED_TRADES
+        if closed_records:
+            ws_closed.append_rows(closed_records, value_input_option="USER_ENTERED")
+
+        # Write closure audit to TRADES (is_deleted=TRUE — won't show in open)
+        close_audit = {
+            "trade_id":        generate_trade_id(),
             "timestamp_entry": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
             "trade_date":      close_date,
             "trade_time":      now_ist().strftime("%H:%M:%S"),
@@ -356,24 +355,24 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
             "strike":          strike,
             "option_type":     opt_type,
             "action":          close_action,
-            "lots_qty":        lots_to_close,
-            "quantity":        lots_to_close * lot_size,
+            "lots_qty":        lots_to_close - remaining,
+            "quantity":        (lots_to_close - remaining) * lot_size,
             "price":           close_price,
-            "price_source":    "MANUAL_CLOSE",
+            "price_source":    "CLOSURE",
             "lot_size":        lot_size,
-            "notes":           f"CLOSURE | P&L ₹{closed_pnl:,.0f}",
-            "is_deleted":      "TRUE",  # mark as deleted so it doesn't show in open trades
+            "notes":           f"CLOSURE | P&L ₹{total_pnl:,.0f}",
+            "is_deleted":      "TRUE",
             "punched_by":      "SELF",
         }
         ws.append_row(
-            [str(row_data.get(h,"")) for h in headers],
+            [str(close_audit.get(h,"")) for h in headers],
             value_input_option="USER_ENTERED"
         )
-        
+
         read_trades.clear()
-        sign = "+" if closed_pnl >= 0 else ""
-        return True, f"✅ Closed {lots_to_close}L {symbol} @ ₹{close_price:,.2f} | P&L {sign}₹{closed_pnl:,.0f}"
-        
+        sign = "+" if total_pnl >= 0 else ""
+        return True, f"✅ Closed {lots_to_close - remaining}L {symbol} @ ₹{close_price:,.2f} · P&L {sign}₹{abs(total_pnl):,.0f}"
+
     except Exception as e:
         return False, f"❌ Close error: {e}"
 
@@ -687,9 +686,37 @@ with col_form:
 with col_trades:
     st.markdown('<div class="section-title">Open Trades</div>', unsafe_allow_html=True)
 
-    if st.button("↻ Refresh"):
+    rb1, rb2 = st.columns([1, 1])
+    if rb1.button("↻ Refresh"):
         read_trades.clear()
         st.rerun()
+    if rb2.button("🗑 Clear All Test Data", help="Marks ALL open trades as deleted. Use to reset."):
+        st.session_state["confirm_clear"] = True
+
+    if st.session_state.get("confirm_clear", False):
+        st.markdown('<div class="warn-box">⚠️ This will mark ALL open trades as deleted. Are you sure?</div>', unsafe_allow_html=True)
+        cc1, cc2 = st.columns(2)
+        if cc1.button("✓ Yes, Clear All"):
+            try:
+                ws      = get_ws(TAB_TRADES)
+                headers = ws.row_values(1)
+                if "is_deleted" in headers:
+                    di       = headers.index("is_deleted") + 1
+                    all_vals = ws.get_all_values()
+                    updates  = []
+                    for i, row in enumerate(all_vals[1:], start=2):
+                        if len(row) >= di and row[di-1].upper() != "TRUE":
+                            updates.append({"range": f"{chr(64+di)}{i}", "values": [["TRUE"]]})
+                    if updates:
+                        ws.batch_update(updates)
+                    read_trades.clear()
+                    st.session_state.pop("confirm_clear", None)
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Clear error: {e}")
+        if cc2.button("Cancel"):
+            st.session_state.pop("confirm_clear", None)
+            st.rerun()
 
     df        = read_trades()
     today_str = now_ist().strftime("%Y-%m-%d")
@@ -704,6 +731,9 @@ with col_trades:
         df_inst_check = get_instruments()
         if df_inst_check.empty:
             load_instruments_to_session()
+
+        # df_display = df filtered by is_deleted=FALSE (already done in read_trades)
+        df_display = df
 
         # ── FETCH LTP + MARGIN FOR ALL POSITIONS (one batch) ──
         ltp_map           = {}
@@ -811,69 +841,6 @@ with col_trades:
         m4.markdown(f'<div class="stat-box"><div class="stat-label">Margin Remaining</div><div class="stat-value" style="color:#e2e8f0">{cr_s}</div><div class="stat-sub">{"of total capital" if cr_s != "—" else "needs AngelOne creds"}</div></div>', unsafe_allow_html=True)
 
         st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-
-        # ── NET POSITIONS — BUY vs SELL per symbol group ──
-        # Group by: strategy + symbol + expiry + strike + option_type
-        # Net lots: BUY = positive, SELL = negative
-        # Net = 0 → fully closed (exclude from display)
-        # Net > 0 → net LONG with net lots
-        # Net < 0 → net SHORT with net lots
-        
-        def net_positions(trades_df):
-            """Net BUY and SELL trades, return only open net positions."""
-            if trades_df.empty:
-                return trades_df
-            
-            group_cols = ["strategy","symbol","instrument","expiry","strike","option_type"]
-            available  = [c for c in group_cols if c in trades_df.columns]
-            
-            net_rows = []
-            for key, grp in trades_df.groupby(available, dropna=False):
-                net_lots = 0.0
-                net_qty  = 0.0
-                avg_buy_px  = 0.0
-                avg_sell_px = 0.0
-                buy_qty = 0.0
-                sell_qty = 0.0
-                latest_row = grp.sort_values("timestamp_entry", ascending=False).iloc[0].copy() if "timestamp_entry" in grp.columns else grp.iloc[0].copy()
-
-                for _, row in grp.iterrows():
-                    act  = str(row.get("action","BUY")).upper()
-                    lots = float(row.get("lots_qty", row.get("quantity",0)) or 0)
-                    px   = float(row.get("price",0) or 0)
-                    cur_ls = get_lot_size(str(row.get("symbol","")))
-                    qty  = lots * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
-                    
-                    if act == "BUY":
-                        net_lots += lots
-                        net_qty  += qty
-                        avg_buy_px = ((avg_buy_px * buy_qty) + (px * qty)) / (buy_qty + qty) if (buy_qty + qty) > 0 else px
-                        buy_qty  += qty
-                    else:
-                        net_lots -= lots
-                        net_qty  -= qty
-                        avg_sell_px = ((avg_sell_px * sell_qty) + (px * qty)) / (sell_qty + qty) if (sell_qty + qty) > 0 else px
-                        sell_qty += qty
-
-                # Skip fully closed positions
-                if abs(net_lots) < 0.01:
-                    continue
-
-                # Build net position row
-                net_row = latest_row.copy()
-                net_row["lots_qty"]  = abs(net_lots)
-                net_row["quantity"]  = abs(net_qty)
-                net_row["action"]    = "BUY" if net_lots > 0 else "SELL"
-                net_row["price"]     = avg_buy_px if net_lots > 0 else avg_sell_px
-                net_row["_net_lots"] = abs(net_lots)
-                net_rows.append(net_row)
-            
-            if not net_rows:
-                return pd.DataFrame()
-            return pd.DataFrame(net_rows)
-
-        # Apply netting per strategy
-        df_display = net_positions(df)
 
         # ── GROUP BY STRATEGY — fixed order ──
         STRATEGY_ORDER = ["TREND", "COMMODITIES", "MOMENTUM"]
