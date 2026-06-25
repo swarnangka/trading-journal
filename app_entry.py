@@ -236,6 +236,148 @@ def close_trade_fast(trade_data: dict, close_price: float, close_date: str) -> b
         st.error(f"Close error: {e}")
         return False
 
+def process_closure_trade(close_action: str, symbol: str, exchange: str,
+                          instrument: str, expiry: str, strike: str, opt_type: str,
+                          lots_to_close: int, close_price: float, close_date: str,
+                          strategy: str, lot_size: int) -> tuple:
+    """
+    Process a closure trade:
+    1. Find matching open position(s) — opposite action, same symbol/expiry/strike
+    2. Calculate P&L
+    3. Mark original trade(s) as deleted (fully closed) or update qty (partial)
+    4. Write to CLOSED_TRADES tab
+    5. Write closure trade to TRADES tab for audit trail
+    Returns (success, message)
+    """
+    try:
+        ws      = get_ws(TAB_TRADES)
+        headers = ws.row_values(1)
+        
+        # Get all open trades
+        all_data = ws.get_all_values()
+        if len(all_data) < 2:
+            return False, "No open trades found."
+        
+        col = {h: i for i, h in enumerate(headers)}
+        
+        # Original action is opposite of close action
+        orig_action = "BUY" if close_action.upper() == "SELL" else "SELL"
+        
+        # Find matching open trades (not deleted, same symbol/expiry/strike)
+        matching = []
+        for i, row in enumerate(all_data[1:], start=2):
+            if len(row) < len(headers): continue
+            d = dict(zip(headers, row))
+            if d.get("is_deleted","").upper() == "TRUE": continue
+            if d.get("symbol","").upper() != symbol.upper(): continue
+            if d.get("action","").upper() != orig_action: continue
+            if instrument and d.get("instrument","").upper() != instrument.upper(): continue
+            if expiry and d.get("expiry","").upper() != expiry.upper(): continue
+            if strike and str(strike) not in ("","0") and d.get("strike","") not in ("","0"):
+                if str(d.get("strike","")).strip() != str(strike).strip(): continue
+            if opt_type and d.get("option_type","").upper() != opt_type.upper(): continue
+            matching.append((i, d))
+        
+        if not matching:
+            return False, f"No open {orig_action} position found for {symbol} {expiry}."
+        
+        # Process oldest first (FIFO)
+        matching.sort(key=lambda x: x[1].get("timestamp_entry",""))
+        
+        remaining_to_close = lots_to_close
+        closed_pnl         = 0.0
+        ws_closed          = get_ws(TAB_CLOSED)
+        c_headers          = ws_closed.row_values(1)
+        
+        for row_idx, trade in matching:
+            if remaining_to_close <= 0: break
+            
+            open_lots = float(trade.get("lots_qty", trade.get("quantity",0)) or 0)
+            lots_this = min(remaining_to_close, open_lots)
+            qty_this  = lots_this * lot_size
+            
+            entry_px  = float(trade.get("price",0) or 0)
+            pnl       = (close_price - entry_px) * qty_this if orig_action == "BUY" else (entry_px - close_price) * qty_this
+            closed_pnl += pnl
+            
+            # Write to CLOSED_TRADES
+            closed = {
+                "trade_id":        trade.get("trade_id",""),
+                "strategy":        strategy,
+                "symbol":          symbol,
+                "exchange":        exchange,
+                "instrument":      instrument,
+                "expiry":          expiry,
+                "strike":          strike,
+                "option_type":     opt_type,
+                "direction":       orig_action,
+                "entry_date":      trade.get("trade_date",""),
+                "exit_date":       close_date,
+                "lots_qty":        lots_this,
+                "quantity":        qty_this,
+                "avg_entry_price": entry_px,
+                "exit_price":      close_price,
+                "gross_pnl":       round(pnl, 2),
+            }
+            ws_closed.append_row(
+                [str(closed.get(h,"")) for h in c_headers],
+                value_input_option="USER_ENTERED"
+            )
+            
+            di = col.get("is_deleted", -1) + 1
+            lq = col.get("lots_qty", -1) + 1
+            qq = col.get("quantity", -1) + 1
+            
+            if lots_this >= open_lots:
+                # Fully closed — mark as deleted
+                if di > 0:
+                    ws.update_cell(row_idx, di, "TRUE")
+            else:
+                # Partially closed — reduce qty
+                remaining_lots = open_lots - lots_this
+                remaining_qty  = remaining_lots * lot_size
+                if lq > 0: ws.update_cell(row_idx, lq, remaining_lots)
+                if qq > 0: ws.update_cell(row_idx, qq, remaining_qty)
+            
+            remaining_to_close -= lots_this
+        
+        # Also record the closure trade in TRADES tab for full audit trail
+        new_tid = generate_trade_id()
+        row_data = {
+            "trade_id":        new_tid,
+            "timestamp_entry": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
+            "trade_date":      close_date,
+            "trade_time":      now_ist().strftime("%H:%M:%S"),
+            "strategy":        strategy,
+            "exchange":        exchange,
+            "instrument":      instrument,
+            "symbol":          symbol,
+            "expiry":          expiry,
+            "strike":          strike,
+            "option_type":     opt_type,
+            "action":          close_action,
+            "lots_qty":        lots_to_close,
+            "quantity":        lots_to_close * lot_size,
+            "price":           close_price,
+            "price_source":    "MANUAL_CLOSE",
+            "lot_size":        lot_size,
+            "notes":           f"CLOSURE | P&L ₹{closed_pnl:,.0f}",
+            "is_deleted":      "TRUE",  # mark as deleted so it doesn't show in open trades
+            "punched_by":      "SELF",
+        }
+        ws.append_row(
+            [str(row_data.get(h,"")) for h in headers],
+            value_input_option="USER_ENTERED"
+        )
+        
+        read_trades.clear()
+        sign = "+" if closed_pnl >= 0 else ""
+        return True, f"✅ Closed {lots_to_close}L {symbol} @ ₹{close_price:,.2f} | P&L {sign}₹{closed_pnl:,.0f}"
+        
+    except Exception as e:
+        return False, f"❌ Close error: {e}"
+
+
 def update_field(trade_id, field, value):
     try:
         ws = get_ws(TAB_TRADES)
@@ -467,14 +609,48 @@ with col_form:
                     st.markdown(f'<div class="warn-box">AngelOne error: {ex}</div>', unsafe_allow_html=True)
 
             notes     = st.text_area("Notes", height=56, placeholder="Setup, SL, reason...")
-            submitted = st.form_submit_button("LOG TRADE →")
+
+            # ── CLOSURE TRADE TOGGLE ──
+            is_closure = st.checkbox(
+                "🔴 This is a CLOSURE trade (closes/reduces existing position)",
+                value=False,
+                help="Tick this when selling to close an existing BUY, or buying to close an existing SELL. "
+                     "This reduces open position qty and records the trade as closed with P&L."
+            )
+            if is_closure:
+                st.markdown(
+                    '<div class="info-box">↩ Closure trade — this will reduce the matching open position '
+                    'and record P&L in Closed Trades.</div>',
+                    unsafe_allow_html=True
+                )
+
+            submitted = st.form_submit_button("LOG TRADE →" if not is_closure else "CLOSE POSITION →")
 
         if submitted:
             if not symbol:
                 st.markdown('<div class="warn-box">⚠️ Symbol required.</div>', unsafe_allow_html=True)
             elif price <= 0:
                 st.markdown('<div class="warn-box">⚠️ Enter a valid price > 0.</div>', unsafe_allow_html=True)
+            elif is_closure:
+                # ── CLOSURE TRADE PATH ──
+                ok_c, msg_c = process_closure_trade(
+                    close_action  = action,
+                    symbol        = symbol,
+                    exchange      = exchange,
+                    instrument    = instrument,
+                    expiry        = expiry,
+                    strike        = str(strike) if strike else "",
+                    opt_type      = opt_type,
+                    lots_to_close = int(lots) if instrument != "CASH" else 0,
+                    close_price   = price,
+                    close_date    = str(trade_date),
+                    strategy      = strategy,
+                    lot_size      = lot_size,
+                )
+                box_class = "success-box" if ok_c else "warn-box"
+                st.markdown(f'<div class="{box_class}">{msg_c}</div>', unsafe_allow_html=True)
             else:
+                # ── REGULAR TRADE PATH ──
                 ok = append_trade({
                     "trade_id":        generate_trade_id(),
                     "timestamp_entry": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
@@ -500,9 +676,7 @@ with col_form:
                 if ok:
                     qty_desc = f"{lots} lots ({quantity:,} sh)" if instrument!="CASH" else f"{int(quantity):,} shares"
                     st.markdown(
-                        f'<div class="success-box">✅ {action} {symbol} — {qty_desc} @ {fmt_px(price)}<br>'
-                        f'<span style="font-size:0.72rem;opacity:0.8;">'
-                        f'Adding to existing position? Both entries show separately — total qty combines in dashboard.</span></div>',
+                        f'<div class="success-box">✅ {action} {symbol} — {qty_desc} @ {fmt_px(price)}</div>',
                         unsafe_allow_html=True
                     )
 
