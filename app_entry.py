@@ -183,73 +183,51 @@ def soft_delete(trade_id):
     except Exception as e:
         st.error(f"Delete error: {e}"); return False
 
-def close_trade(trade_id: str, close_price: float, close_date: str,
-                trade_data: dict = None) -> bool:
+def close_trade_fast(trade_data: dict, close_price: float, close_date: str) -> bool:
     """
-    Close an open trade — optimized for speed.
-    trade_data: pass the trade dict from df to avoid re-reading sheet.
-    1. Mark original as deleted (single cell update)
-    2. Append to CLOSED_TRADES
+    Fast close: append a matching SELL row to TRADES tab.
+    One API call. Dashboard nets BUY+SELL to show position as closed.
     """
     try:
         ws      = get_ws(TAB_TRADES)
         headers = ws.row_values(1)
-        ti      = headers.index("trade_id") + 1
-        di      = headers.index("is_deleted") + 1
 
-        # Find row index using col_values (faster than get_all_values)
-        tid_col = ws.col_values(ti)
-        row_idx = None
-        for i, v in enumerate(tid_col):
-            if v == str(trade_id):
-                row_idx = i + 1
-                break
+        action    = str(trade_data.get("action","BUY")).upper()
+        close_act = "SELL" if action == "BUY" else "BUY"  # opposite action
+        sym       = str(trade_data.get("symbol",""))
+        lots      = str(trade_data.get("lots_qty","1"))
+        instr     = str(trade_data.get("instrument","FUT"))
+        cur_ls    = get_lot_size(sym)
+        try:
+            lots_int = int(float(lots))
+        except:
+            lots_int = 1
+        qty = lots_int * cur_ls if cur_ls > 1 else int(float(trade_data.get("quantity",lots_int)))
 
-        if row_idx is None:
-            st.error("Trade not found.")
-            return False
-
-        # Get trade data from sheet if not passed
-        if not trade_data:
-            row_vals  = ws.row_values(row_idx)
-            trade_data = dict(zip(headers, row_vals))
-
-        # Batch: mark deleted + get data in same operation
-        ws.update_cell(row_idx, di, "TRUE")
-
-        # Calculate P&L
-        action   = str(trade_data.get("action","BUY")).upper()
-        entry_px = float(trade_data.get("price", 0) or 0)
-        lots     = float(trade_data.get("lots_qty", 0) or 0)
-        sym      = str(trade_data.get("symbol",""))
-        lot_size = get_lot_size(sym)
-        qty      = lots * lot_size if lot_size > 1 and lots > 0 else float(trade_data.get("quantity", 0) or 0)
-        gross_pnl = (close_price - entry_px) * qty if action == "BUY" else (entry_px - close_price) * qty
-
-        # Write to CLOSED_TRADES
-        ws_closed = get_ws(TAB_CLOSED)
-        c_headers = ws_closed.row_values(1)
-
-        closed = {
-            "trade_id":        trade_data.get("trade_id",""),
-            "strategy":        trade_data.get("strategy",""),
+        row = {
+            "trade_id":        generate_trade_id(),
+            "timestamp_entry": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
+            "trade_date":      close_date,
+            "trade_time":      now_ist().strftime("%H:%M:%S"),
+            "strategy":        str(trade_data.get("strategy","")),
+            "exchange":        str(trade_data.get("exchange","NSE")),
+            "instrument":      instr,
             "symbol":          sym,
-            "exchange":        trade_data.get("exchange",""),
-            "instrument":      trade_data.get("instrument",""),
-            "expiry":          trade_data.get("expiry",""),
-            "strike":          trade_data.get("strike",""),
-            "option_type":     trade_data.get("option_type",""),
-            "direction":       action,
-            "entry_date":      trade_data.get("trade_date",""),
-            "exit_date":       close_date,
-            "lots_qty":        lots,
+            "expiry":          str(trade_data.get("expiry","")),
+            "strike":          str(trade_data.get("strike","")),
+            "option_type":     str(trade_data.get("option_type","")),
+            "action":          close_act,
+            "lots_qty":        lots_int,
             "quantity":        qty,
-            "avg_entry_price": entry_px,
-            "exit_price":      close_price,
-            "gross_pnl":       round(gross_pnl, 2),
+            "price":           close_price,
+            "price_source":    "MANUAL_CLOSE",
+            "lot_size":        cur_ls,
+            "notes":           f"CLOSE of {trade_data.get('trade_id','')}",
+            "is_deleted":      "FALSE",
+            "punched_by":      "SELF",
         }
-        ws_closed.append_row(
-            [str(closed.get(h,"")) for h in c_headers],
+        ws.append_row(
+            [str(row.get(h,"")) for h in headers],
             value_input_option="USER_ENTERED"
         )
         read_trades.clear()
@@ -257,7 +235,6 @@ def close_trade(trade_id: str, close_price: float, close_date: str,
     except Exception as e:
         st.error(f"Close error: {e}")
         return False
-
 
 def update_field(trade_id, field, value):
     try:
@@ -556,6 +533,7 @@ with col_trades:
 
         # ── FETCH LTP + MARGIN FOR ALL POSITIONS (one batch) ──
         ltp_map           = {}
+        margin_map        = {}   # {trade_id: margin_estimate}
         total_margin_used = 0.0
 
         try:
@@ -599,21 +577,23 @@ with col_trades:
                     mdata = fetch_margin_for_positions(positions_for_margin)
                     total_margin_used = float(mdata.get("_total_required", 0))
 
-                # Fallback: estimate margin from LTP × CORRECT qty × margin_pct
-                # Always run fallback (SPAN API not reliable from Streamlit Cloud)
-                est_margin = 0.0
+                # Build per-position margin map (symbol → margin estimate)
+                # Using LTP × qty × SEBI min margin %
+                margin_map = {}   # {sym: margin_for_this_position}
                 for _, row in df.iterrows():
                     sym   = str(row.get("symbol",""))
                     instr = str(row.get("instrument","FUT"))
                     lots  = float(row.get("lots_qty", row.get("quantity",0)) or 0)
+                    tid_r = str(row.get("trade_id",""))
                     if sym in ltp_map and instr.upper() != "CASH":
-                        ltp      = ltp_map[sym]
-                        cur_ls   = get_lot_size(sym)  # current lot size from instruments
-                        cur_qty  = lots * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
-                        pct      = 0.12 if instr.upper()=="OPT" else 0.15
-                        est_margin += ltp * cur_qty * pct
-                if est_margin > 0:
-                    total_margin_used = est_margin
+                        ltp     = ltp_map[sym]
+                        cur_ls  = get_lot_size(sym)
+                        cur_qty = lots * cur_ls if cur_ls > 1 else float(row.get("quantity",0) or 0)
+                        pct     = 0.12 if instr.upper()=="OPT" else 0.15
+                        pos_margin = ltp * cur_qty * pct
+                        # Store per trade_id for position-level display
+                        margin_map[tid_r] = pos_margin
+                total_margin_used = sum(margin_map.values())
 
         except Exception:
             pass
@@ -693,7 +673,13 @@ with col_trades:
             )
             sc2.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Positions</div><div style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">{len(strategy_df)}</div>', unsafe_allow_html=True)
             sc3.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">MTM P&L</div><div style="font-size:0.9rem;font-weight:600;color:{strat_mtm_c};">{strat_mtm_s}</div>', unsafe_allow_html=True)
-            sc4.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Margin</div><div style="font-size:0.9rem;font-weight:600;color:#e2e8f0;">—</div>', unsafe_allow_html=True)
+            strat_margin = sum(
+                margin_map.get(str(r.get("trade_id","")), 0)
+                for _, r in strategy_df.iterrows()
+            )
+            strat_mg_s = f"₹{strat_margin/100000:.1f}L" if strat_margin > 0 else "—"
+            strat_mg_c = "#22c55e" if strat_margin > 0 else "#475569"
+            sc4.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Margin</div><div style="font-size:0.9rem;font-weight:600;color:{strat_mg_c};">{strat_mg_s}</div>', unsafe_allow_html=True)
             sc5.markdown(f'<div style="font-size:0.65rem;color:#475569;text-transform:uppercase;letter-spacing:0.08em;margin-top:2px;">Today</div><div style="font-size:0.9rem;font-weight:600;color:#f97316;">{strat_today}</div>', unsafe_allow_html=True)
 
             st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
@@ -746,6 +732,10 @@ with col_trades:
                 is_editing = (st.session_state.edit_id == tid)
                 ci, cb2   = st.columns([3,1])
 
+                # Per-position margin
+                pos_margin     = margin_map.get(tid, 0)
+                pos_margin_str = f"Mrgn ₹{pos_margin/100000:.2f}L" if pos_margin > 0 else ""
+
                 with ci:
                     st.markdown(
                         f'<div style="background:#0f0f1a;border:1px solid #1e1e2e;border-radius:6px;padding:8px 12px;margin-bottom:4px;">'
@@ -754,7 +744,9 @@ with col_trades:
                         f'{"  ·  LTP " + ltp_str if ltp_str else ""}'
                         f'{"  " + mtm_str if mtm_str else ""}'
                         f'</div>'
-                        f'<div class="trade-meta">{dt_v} · {days_str} open</div>'
+                        f'<div class="trade-meta">{dt_v} · {days_str} open'
+                        f'{"  ·  <span style=\'color:#7c6fcd;\'>" + pos_margin_str + "</span>" if pos_margin_str else ""}'
+                        f'</div>'
                         f'</div>',
                         unsafe_allow_html=True
                     )
@@ -826,7 +818,6 @@ with col_trades:
                     except: pass
                     cs1, cs2 = st.columns(2)
                     if cs1.button("✓ Confirm Close", key=f"cf_{tid}"):
-                        # Pass trade data from df row — avoids extra sheet read
                         trade_dict = {
                             "trade_id":   tid,
                             "action":     act,
@@ -834,7 +825,7 @@ with col_trades:
                             "lots_qty":   lv,
                             "quantity":   qv,
                             "symbol":     sym,
-                            "strategy":   strat,
+                            "strategy":   strategy_name,
                             "exchange":   str(row.get("exchange","NSE")),
                             "instrument": instr,
                             "expiry":     exp_v,
@@ -842,7 +833,7 @@ with col_trades:
                             "option_type":opt_v,
                             "trade_date": dt_v,
                         }
-                        ok_close = close_trade(tid, close_px, str(close_dt), trade_dict)
+                        ok_close = close_trade_fast(trade_dict, close_px, str(close_dt))
                         if ok_close:
                             st.session_state.pop(f"close_{tid}", None)
                             st.rerun()
