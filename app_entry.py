@@ -224,8 +224,10 @@ def write_instruments(rows):
         av = ws.get_all_values()
         if len(av) > 1:
             ws.batch_clear([f"A2:Z{len(av)}"])
-        data = [[r["symbol"],r["underlying"],r["lot_size"],
-                 r["exchange"],r["instrument_type"],r["last_updated"]] for r in rows]
+        # Column order MUST match setup_sheet.py INSTRUMENTS_HEADERS:
+        # symbol | exchange | instrument_type | lot_size | as_of_month | underlying_name
+        data = [[r["symbol"], r["exchange"], r["instrument_type"],
+                 r["lot_size"], r["last_updated"], r["underlying"]] for r in rows]
         ws.append_rows(data, value_input_option="USER_ENTERED")
         # Immediately update session cache — no extra API call needed
         st.session_state["_instruments_df"] = pd.DataFrame(rows)
