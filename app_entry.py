@@ -1,23 +1,15 @@
 """
-PARABOLIC DASHBOARD — Trade Entry
-===================================
-Private app for logging trades.
-Dark premium design. No password needed (private URL).
+PARABOLIC DASHBOARD — Trade Entry (self-contained, no core imports)
 """
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime, date, time as dtime
+import gspread
+import csv
+import io
 import pytz
-import uuid
-
-from core.sheets import (
-    get_strategy_list, get_fno_symbols, get_lot_size,
-    read_trades, append_trade, soft_delete_trade, update_trade_field,
-    now_ist, generate_trade_id, build_expiry_months,
-    parse_fo_mktlots_csv, write_instruments_to_sheet,
-    read_instruments,
-)
+from datetime import datetime
+from google.oauth2.service_account import Credentials
 
 # ── PAGE CONFIG ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -27,296 +19,247 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── DESIGN TOKENS & CSS ────────────────────────────────────────────────────────
+# ── CONSTANTS ──────────────────────────────────────────────────────────────────
+IST    = pytz.timezone("Asia/Kolkata")
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+TAB_TRADES      = "TRADES"
+TAB_INSTRUMENTS = "INSTRUMENTS"
+TAB_STRATEGIES  = "STRATEGIES"
+
+# ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
-/* ── BASE ── */
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-    background-color: #0a0a0f;
-    color: #e2e8f0;
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; background:#0a0a0f; color:#e2e8f0; }
+.stApp { background:#0a0a0f; }
+.block-container { padding:1.5rem 2rem 3rem 2rem; max-width:1400px; }
+.pb-header { display:flex; align-items:baseline; gap:12px; padding:0 0 1.5rem 0; border-bottom:1px solid #1e1e2e; margin-bottom:2rem; }
+.pb-logo { font-size:1.1rem; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#f97316; }
+.pb-sub  { font-size:0.75rem; color:#475569; letter-spacing:0.08em; text-transform:uppercase; }
+.pb-panel-title { font-size:0.65rem; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#475569; margin-bottom:1.2rem; padding-bottom:0.6rem; border-bottom:1px solid #1e1e2e; }
+.stSelectbox label, .stNumberInput label, .stTextInput label, .stDateInput label, .stTimeInput label, .stTextArea label {
+    font-size:0.7rem !important; font-weight:500 !important; letter-spacing:0.08em !important;
+    text-transform:uppercase !important; color:#64748b !important; margin-bottom:4px !important;
 }
-.stApp { background-color: #0a0a0f; }
-.block-container { padding: 1.5rem 2rem 3rem 2rem; max-width: 1400px; }
-
-/* ── HEADER ── */
-.pb-header {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    padding: 0 0 1.5rem 0;
-    border-bottom: 1px solid #1e1e2e;
-    margin-bottom: 2rem;
+.stSelectbox > div > div, .stTextInput > div > div > input,
+.stNumberInput > div > div > input, .stDateInput > div > div > input {
+    background-color:#141420 !important; border:1px solid #252538 !important;
+    border-radius:6px !important; color:#e2e8f0 !important; font-size:0.875rem !important;
 }
-.pb-logo {
-    font-size: 1.1rem;
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: #f97316;
-}
-.pb-sub {
-    font-size: 0.75rem;
-    color: #475569;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-}
-
-/* ── PANEL ── */
-.pb-panel {
-    background: #0f0f1a;
-    border: 1px solid #1e1e2e;
-    border-radius: 8px;
-    padding: 1.5rem;
-}
-.pb-panel-title {
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: #475569;
-    margin-bottom: 1.2rem;
-    padding-bottom: 0.6rem;
-    border-bottom: 1px solid #1e1e2e;
-}
-
-/* ── FORM INPUTS ── */
-.stSelectbox label, .stNumberInput label, .stTextInput label,
-.stDateInput label, .stTimeInput label, .stTextArea label {
-    font-size: 0.7rem !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.08em !important;
-    text-transform: uppercase !important;
-    color: #64748b !important;
-    margin-bottom: 4px !important;
-}
-.stSelectbox > div > div,
-.stTextInput > div > div > input,
-.stNumberInput > div > div > input,
-.stDateInput > div > div > input,
-.stTimeInput > div > div > input {
-    background-color: #141420 !important;
-    border: 1px solid #252538 !important;
-    border-radius: 6px !important;
-    color: #e2e8f0 !important;
-    font-family: 'Inter', sans-serif !important;
-    font-size: 0.875rem !important;
-}
-.stSelectbox > div > div:focus-within,
-.stTextInput > div > div:focus-within,
-.stNumberInput > div > div:focus-within {
-    border-color: #f97316 !important;
-    box-shadow: 0 0 0 2px rgba(249,115,22,0.15) !important;
-}
-textarea {
-    background-color: #141420 !important;
-    border: 1px solid #252538 !important;
-    border-radius: 6px !important;
-    color: #e2e8f0 !important;
-    font-size: 0.875rem !important;
-}
-
-/* ── BUTTONS ── */
-.stButton > button {
-    background: transparent;
-    border: 1px solid #252538;
-    border-radius: 6px;
-    color: #94a3b8;
-    font-size: 0.75rem;
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    padding: 0.4rem 0.9rem;
-    transition: all 0.15s ease;
-    cursor: pointer;
-}
-.stButton > button:hover {
-    border-color: #f97316;
-    color: #f97316;
-    background: rgba(249,115,22,0.06);
-}
-
-/* Primary submit button */
-.stForm [data-testid="stFormSubmitButton"] > button {
-    background: #f97316;
-    border: none;
-    border-radius: 6px;
-    color: #fff;
-    font-size: 0.8rem;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 0.55rem 1.5rem;
-    width: 100%;
-    transition: all 0.15s ease;
-}
-.stForm [data-testid="stFormSubmitButton"] > button:hover {
-    background: #ea6a0a;
-}
-
-/* ── QTY DISPLAY ── */
-.qty-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: rgba(249,115,22,0.1);
-    border: 1px solid rgba(249,115,22,0.25);
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.8rem;
-    color: #f97316;
-    margin: 6px 0 12px 0;
-}
-.qty-dot {
-    width: 6px; height: 6px;
-    background: #f97316;
-    border-radius: 50%;
-    display: inline-block;
-}
-
-/* ── ACTION BADGE ── */
-.badge-buy {
-    display: inline-block;
-    background: rgba(34,197,94,0.12);
-    border: 1px solid rgba(34,197,94,0.3);
-    color: #22c55e;
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-}
-.badge-sell {
-    display: inline-block;
-    background: rgba(239,68,68,0.12);
-    border: 1px solid rgba(239,68,68,0.3);
-    color: #ef4444;
-    border-radius: 4px;
-    padding: 2px 8px;
-    font-size: 0.65rem;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-}
-.badge-new {
-    display: inline-block;
-    background: rgba(249,115,22,0.15);
-    border: 1px solid rgba(249,115,22,0.35);
-    color: #f97316;
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-size: 0.6rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    margin-left: 4px;
-}
-
-/* ── TRADE ROW ── */
-.trade-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    background: #0f0f1a;
-    border: 1px solid #1e1e2e;
-    border-radius: 7px;
-    margin-bottom: 6px;
-    transition: border-color 0.15s;
-}
-.trade-row:hover { border-color: #2e2e48; }
-.trade-meta {
-    font-size: 0.72rem;
-    color: #475569;
-    font-family: 'JetBrains Mono', monospace;
-}
-.trade-symbol {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: #e2e8f0;
-    margin-bottom: 2px;
-}
-.trade-price {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.85rem;
-    color: #94a3b8;
-}
-
-/* ── EDIT PANEL ── */
-.edit-panel {
-    background: #0a0a14;
-    border: 1px solid #2e2e48;
-    border-radius: 8px;
-    padding: 1rem 1.2rem;
-    margin: 4px 0 10px 0;
-}
-
-/* ── WARN / INFO ── */
-.warn-box {
-    background: rgba(234,179,8,0.08);
-    border-left: 3px solid #eab308;
-    border-radius: 0 6px 6px 0;
-    padding: 8px 12px;
-    font-size: 0.78rem;
-    color: #ca8a04;
-    margin: 6px 0;
-}
-.info-box {
-    background: rgba(59,130,246,0.08);
-    border-left: 3px solid #3b82f6;
-    border-radius: 0 6px 6px 0;
-    padding: 8px 12px;
-    font-size: 0.78rem;
-    color: #60a5fa;
-    margin: 6px 0;
-}
-.success-box {
-    background: rgba(34,197,94,0.08);
-    border-left: 3px solid #22c55e;
-    border-radius: 0 6px 6px 0;
-    padding: 8px 12px;
-    font-size: 0.78rem;
-    color: #22c55e;
-    margin: 6px 0;
-}
-
-/* ── DIVIDER ── */
-.pb-divider {
-    border: none;
-    border-top: 1px solid #1e1e2e;
-    margin: 1rem 0;
-}
-
-/* ── INSTRUMENT TABS ── */
-.stTabs [data-baseweb="tab-list"] {
-    background: transparent;
-    gap: 2px;
-}
-.stTabs [data-baseweb="tab"] {
-    background: transparent;
-    border: 1px solid #1e1e2e;
-    border-radius: 6px;
-    color: #64748b;
-    font-size: 0.72rem;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 6px 14px;
-}
-.stTabs [aria-selected="true"] {
-    background: rgba(249,115,22,0.1) !important;
-    border-color: rgba(249,115,22,0.35) !important;
-    color: #f97316 !important;
-}
-
-/* ── HIDE STREAMLIT CHROME ── */
-#MainMenu, footer, header { visibility: hidden; }
-.stDeployButton { display: none; }
+textarea { background-color:#141420 !important; border:1px solid #252538 !important; border-radius:6px !important; color:#e2e8f0 !important; font-size:0.875rem !important; }
+.stButton > button { background:transparent; border:1px solid #252538; border-radius:6px; color:#94a3b8; font-size:0.75rem; font-weight:500; padding:0.4rem 0.9rem; transition:all 0.15s; }
+.stButton > button:hover { border-color:#f97316; color:#f97316; background:rgba(249,115,22,0.06); }
+.stForm [data-testid="stFormSubmitButton"] > button { background:#f97316; border:none; border-radius:6px; color:#fff; font-size:0.8rem; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; padding:0.55rem 1.5rem; width:100%; }
+.stForm [data-testid="stFormSubmitButton"] > button:hover { background:#ea6a0a; }
+.qty-pill { display:inline-flex; align-items:center; gap:6px; background:rgba(249,115,22,0.1); border:1px solid rgba(249,115,22,0.25); border-radius:20px; padding:4px 12px; font-family:'JetBrains Mono',monospace; font-size:0.8rem; color:#f97316; margin:6px 0 12px 0; }
+.badge-buy  { background:rgba(34,197,94,0.12); border:1px solid rgba(34,197,94,0.3); color:#22c55e; border-radius:4px; padding:2px 8px; font-size:0.65rem; font-weight:600; }
+.badge-sell { background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); color:#ef4444; border-radius:4px; padding:2px 8px; font-size:0.65rem; font-weight:600; }
+.badge-new  { background:rgba(249,115,22,0.15); border:1px solid rgba(249,115,22,0.35); color:#f97316; border-radius:4px; padding:1px 6px; font-size:0.6rem; font-weight:700; margin-left:4px; }
+.trade-symbol { font-size:0.9rem; font-weight:600; color:#e2e8f0; margin-bottom:2px; }
+.trade-meta   { font-size:0.72rem; color:#475569; font-family:'JetBrains Mono',monospace; }
+.edit-panel   { background:#0a0a14; border:1px solid #2e2e48; border-radius:8px; padding:1rem 1.2rem; margin:4px 0 10px 0; }
+.warn-box    { background:rgba(234,179,8,0.08); border-left:3px solid #eab308; border-radius:0 6px 6px 0; padding:8px 12px; font-size:0.78rem; color:#ca8a04; margin:6px 0; }
+.info-box    { background:rgba(59,130,246,0.08); border-left:3px solid #3b82f6; border-radius:0 6px 6px 0; padding:8px 12px; font-size:0.78rem; color:#60a5fa; margin:6px 0; }
+.success-box { background:rgba(34,197,94,0.08); border-left:3px solid #22c55e; border-radius:0 6px 6px 0; padding:8px 12px; font-size:0.78rem; color:#22c55e; margin:6px 0; }
+.pb-divider  { border:none; border-top:1px solid #1e1e2e; margin:1rem 0; }
+.stTabs [data-baseweb="tab-list"] { background:transparent; gap:2px; }
+.stTabs [data-baseweb="tab"] { background:transparent; border:1px solid #1e1e2e; border-radius:6px; color:#64748b; font-size:0.72rem; font-weight:500; letter-spacing:0.08em; text-transform:uppercase; padding:6px 14px; }
+.stTabs [aria-selected="true"] { background:rgba(249,115,22,0.1) !important; border-color:rgba(249,115,22,0.35) !important; color:#f97316 !important; }
+#MainMenu, footer, header { visibility:hidden; }
+.stDeployButton { display:none; }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── HEADER ────────────────────────────────────────────────────────────────────
+# ── GOOGLE SHEETS AUTH ─────────────────────────────────────────────────────────
+
+@st.cache_resource(ttl=3600)
+def get_client():
+    raw = dict(st.secrets["gcp_service_account"])
+    pk  = str(raw.get("private_key", ""))
+    pk  = pk.replace("\\n", "\n")
+    if not pk.endswith("\n"):
+        pk += "\n"
+    raw["private_key"] = pk
+    creds = Credentials.from_service_account_info(raw, scopes=SCOPES)
+    return gspread.authorize(creds)
+
+def get_sheet():
+    return get_client().open_by_key(st.secrets["app"]["sheet_id"])
+
+def get_ws(tab):
+    return get_sheet().worksheet(tab)
+
+
+# ── READ HELPERS ───────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=60)
+def read_trades():
+    data = get_ws(TAB_TRADES).get_all_records()
+    if not data:
+        return pd.DataFrame()
+    df = pd.DataFrame(data)
+    if "is_deleted" in df.columns:
+        df = df[df["is_deleted"].astype(str).str.upper() != "TRUE"]
+    return df
+
+@st.cache_data(ttl=3600)
+def read_instruments():
+    data = get_ws(TAB_INSTRUMENTS).get_all_records()
+    return pd.DataFrame(data) if data else pd.DataFrame()
+
+@st.cache_data(ttl=300)
+def read_strategies():
+    data = get_ws(TAB_STRATEGIES).get_all_records()
+    return pd.DataFrame(data) if data else pd.DataFrame()
+
+def get_strategy_list():
+    df = read_strategies()
+    if df.empty or "strategy_name" not in df.columns:
+        return []
+    if "active" in df.columns:
+        df = df[df["active"].astype(str).str.upper() == "Y"]
+    return df["strategy_name"].tolist()
+
+def get_fno_symbols():
+    df = read_instruments()
+    if df.empty or "symbol" not in df.columns:
+        return []
+    return sorted(df["symbol"].str.strip().tolist())
+
+def get_lot_size(symbol):
+    df = read_instruments()
+    if df.empty:
+        return 1
+    match = df[df["symbol"].str.upper().str.strip() == symbol.upper().strip()]
+    if match.empty:
+        return 1
+    try:
+        return int(match.iloc[0]["lot_size"])
+    except Exception:
+        return 1
+
+
+# ── WRITE HELPERS ──────────────────────────────────────────────────────────────
+
+def append_trade(row_data):
+    try:
+        ws      = get_ws(TAB_TRADES)
+        headers = ws.row_values(1)
+        row     = [str(row_data.get(h, "")) for h in headers]
+        ws.append_row(row, value_input_option="USER_ENTERED")
+        read_trades.clear()
+        return True
+    except Exception as e:
+        st.error(f"Write error: {e}")
+        return False
+
+def soft_delete_trade(trade_id):
+    try:
+        ws      = get_ws(TAB_TRADES)
+        headers = ws.row_values(1)
+        tid_col     = headers.index("trade_id") + 1
+        deleted_col = headers.index("is_deleted") + 1
+        for i, val in enumerate(ws.col_values(tid_col)):
+            if val == str(trade_id):
+                ws.update_cell(i + 1, deleted_col, "TRUE")
+                read_trades.clear()
+                return True
+        return False
+    except Exception as e:
+        st.error(f"Delete error: {e}")
+        return False
+
+def update_trade_field(trade_id, field, value):
+    try:
+        ws      = get_ws(TAB_TRADES)
+        headers = ws.row_values(1)
+        tid_col   = headers.index("trade_id") + 1
+        field_col = headers.index(field) + 1
+        for i, val in enumerate(ws.col_values(tid_col)):
+            if val == str(trade_id):
+                ws.update_cell(i + 1, field_col, str(value))
+                read_trades.clear()
+                return True
+        return False
+    except Exception as e:
+        st.error(f"Update error: {e}")
+        return False
+
+
+# ── INSTRUMENTS CSV PARSER ─────────────────────────────────────────────────────
+
+def parse_fo_csv(csv_text):
+    rows = []
+    for row in csv.reader(io.StringIO(csv_text)):
+        if len(row) < 3:
+            continue
+        symbol  = row[1].strip()
+        lot_str = row[2].strip()
+        if not symbol or symbol.lower() in ("symbol", "underlying", ""):
+            continue
+        if not lot_str or not lot_str.isdigit():
+            continue
+        if row[0].strip().lower().startswith("derivatives on individual"):
+            continue
+        rows.append({
+            "symbol":          symbol,
+            "underlying":      row[0].strip(),
+            "lot_size":        int(lot_str),
+            "exchange":        "NSE",
+            "instrument_type": "FUT_OPT",
+            "last_updated":    now_ist().strftime("%Y-%m-%d %H:%M"),
+        })
+    return rows
+
+def write_instruments(parsed_rows):
+    try:
+        ws = get_ws(TAB_INSTRUMENTS)
+        ws.resize(rows=1)
+        data = [[r["symbol"], r["underlying"], r["lot_size"],
+                 r["exchange"], r["instrument_type"], r["last_updated"]]
+                for r in parsed_rows]
+        ws.append_rows(data, value_input_option="USER_ENTERED")
+        read_instruments.clear()
+        return True, f"✅ {len(data)} symbols written to INSTRUMENTS tab."
+    except Exception as e:
+        return False, f"❌ {e}"
+
+
+# ── UTILS ──────────────────────────────────────────────────────────────────────
+
+def now_ist():
+    return datetime.now(IST)
+
+def generate_trade_id():
+    return now_ist().strftime("TRD-%Y%m%d-%H%M%S")
+
+def build_expiry_months(n=6):
+    months = []
+    base = now_ist()
+    for i in range(n):
+        month = (base.month - 1 + i) % 12 + 1
+        year  = base.year + (base.month - 1 + i) // 12
+        months.append(datetime(year, month, 1).strftime("%b-%y").upper())
+    return months
+
+def badge(action):
+    cls = "badge-buy" if action == "BUY" else "badge-sell"
+    return f'<span class="{cls}">{action}</span>'
+
+
+# ── SESSION STATE ──────────────────────────────────────────────────────────────
+if "edit_trade_id" not in st.session_state:
+    st.session_state.edit_trade_id = None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE
+# ══════════════════════════════════════════════════════════════════════════════
+
 st.markdown("""
 <div class="pb-header">
     <span class="pb-logo">⚡ Parabolic</span>
@@ -325,109 +268,69 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# ── SESSION STATE ─────────────────────────────────────────────────────────────
-if "edit_trade_id" not in st.session_state:
-    st.session_state.edit_trade_id = None
-if "show_instruments" not in st.session_state:
-    st.session_state.show_instruments = False
-
-
-# ── ANGELONE PRICE FETCH ───────────────────────────────────────────────────────
-def fetch_ltp(symbol: str, exchange: str, instrument: str) -> float | None:
-    """Fetch live LTP via AngelOne. Returns None on any failure."""
-    try:
-        from core.angelone import get_ltp
-        return get_ltp(symbol, exchange, instrument)
-    except Exception:
-        return None
-
-
-# ── HELPERS ───────────────────────────────────────────────────────────────────
-def badge(action: str) -> str:
-    cls = "badge-buy" if action == "BUY" else "badge-sell"
-    return f'<span class="{cls}">{action}</span>'
-
-
-def is_today(trade_date_str: str) -> bool:
-    try:
-        td = datetime.strptime(str(trade_date_str), "%Y-%m-%d").date()
-        return td == now_ist().date()
-    except Exception:
-        return False
-
-
-# ── INSTRUMENTS UPDATE SECTION ─────────────────────────────────────────────────
-with st.expander("🔧 Update F&O Lot Sizes (paste NSE CSV)", expanded=st.session_state.show_instruments):
-    st.markdown("""
-    <div style='font-size:0.78rem; color:#64748b; margin-bottom:12px;'>
-    Download <code>fo_mktlots.csv</code> from NSE quarterly → open in text editor →
-    select all → copy → paste below → click Update.
-    </div>
-    """, unsafe_allow_html=True)
-
-    csv_text = st.text_area(
-        "Paste fo_mktlots.csv content here",
-        height=120,
-        placeholder="UNDERLYING,SYMBOL,JUN-26,JUL-26,...\nNIFTY 50,NIFTY,65,65,...",
-        label_visibility="collapsed",
+# ── INSTRUMENTS UPDATER ────────────────────────────────────────────────────────
+with st.expander("🔧 Update F&O Lot Sizes  —  paste NSE fo_mktlots.csv here"):
+    st.markdown(
+        '<div style="font-size:0.78rem;color:#64748b;margin-bottom:10px;">'
+        'Download <code>fo_mktlots.csv</code> from NSE → open in any text editor → '
+        'Select All → Copy → paste below → click Update.</div>',
+        unsafe_allow_html=True
     )
-
-    col_a, col_b = st.columns([1, 4])
-    if col_a.button("Update Instruments", type="primary" if csv_text else "secondary"):
+    csv_text = st.text_area("CSV content", height=100,
+                             placeholder="UNDERLYING,SYMBOL,JUN-26,...",
+                             label_visibility="collapsed")
+    ca, cb = st.columns([1, 4])
+    if ca.button("⬆ Update Instruments"):
         if csv_text.strip():
-            parsed = parse_fo_mktlots_csv(csv_text)
+            parsed = parse_fo_csv(csv_text)
             if parsed:
-                ok, msg = write_instruments_to_sheet(parsed)
-                if ok:
-                    st.markdown(f'<div class="success-box">{msg}</div>', unsafe_allow_html=True)
-                else:
-                    st.markdown(f'<div class="warn-box">{msg}</div>', unsafe_allow_html=True)
+                ok, msg = write_instruments(parsed)
+                st.markdown(
+                    f'<div class="{"success-box" if ok else "warn-box"}">{msg}</div>',
+                    unsafe_allow_html=True
+                )
             else:
-                st.markdown('<div class="warn-box">⚠️ Could not parse any symbols. Check the CSV format.</div>', unsafe_allow_html=True)
+                st.markdown('<div class="warn-box">⚠️ No valid rows found — check CSV format.</div>', unsafe_allow_html=True)
         else:
-            st.markdown('<div class="warn-box">⚠️ Paste the CSV content first.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="warn-box">⚠️ Paste CSV content first.</div>', unsafe_allow_html=True)
 
-    # Show current instrument count
     df_inst = read_instruments()
     if not df_inst.empty:
-        col_b.markdown(
-            f'<div style="font-size:0.72rem; color:#475569; padding-top:0.6rem;">'
-            f'{len(df_inst)} symbols loaded · Last update: '
-            f'{df_inst["last_updated"].iloc[0] if "last_updated" in df_inst.columns else "unknown"}'
-            f'</div>',
-            unsafe_allow_html=True,
+        last = df_inst["last_updated"].iloc[0] if "last_updated" in df_inst.columns else "—"
+        cb.markdown(
+            f'<div style="font-size:0.72rem;color:#475569;padding-top:0.6rem;">'
+            f'{len(df_inst)} symbols loaded · updated {last}</div>',
+            unsafe_allow_html=True
         )
 
 st.markdown("<div class='pb-divider'></div>", unsafe_allow_html=True)
 
 
-# ── MAIN LAYOUT: ENTRY FORM | OPEN TRADES ─────────────────────────────────────
+# ── MAIN COLUMNS ──────────────────────────────────────────────────────────────
 col_form, col_trades = st.columns([1, 1.4], gap="large")
 
 
-# ═══════════════════════════════════════════════════════
-# LEFT: ENTRY FORM
-# ═══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
+# LEFT — ENTRY FORM
+# ══════════════════════════════════════════════════════
 with col_form:
     st.markdown('<div class="pb-panel-title">New Trade</div>', unsafe_allow_html=True)
 
-    strategies = get_strategy_list()
+    strategies  = get_strategy_list()
     fno_symbols = get_fno_symbols()
 
     if not strategies:
-        st.markdown('<div class="warn-box">No strategies found — check STRATEGIES tab in Google Sheet.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="warn-box">No strategies — check STRATEGIES tab in Google Sheet.</div>', unsafe_allow_html=True)
     else:
-        with st.form("trade_entry_form", clear_on_submit=True):
+        with st.form("entry_form", clear_on_submit=True):
 
-            # ── Strategy ──
             strategy = st.selectbox("Strategy", strategies)
 
-            # ── Exchange + Instrument ──
             c1, c2 = st.columns(2)
             exchange   = c1.selectbox("Exchange", ["NSE", "BSE", "MCX"])
             instrument = c2.selectbox("Instrument", ["FUT", "OPT", "CASH"])
 
-            # ── Symbol ──
+            # Symbol
             if instrument == "CASH":
                 symbol   = st.text_input("Symbol", placeholder="e.g. RELIANCE").upper().strip()
                 expiry   = ""
@@ -438,8 +341,8 @@ with col_form:
                     symbol = st.selectbox("Symbol", fno_symbols)
                 else:
                     symbol = st.text_input(
-                        "Symbol",
-                        placeholder="No F&O list — paste CSV above first, or type symbol"
+                        "Symbol (no F&O list yet — paste CSV above)",
+                        placeholder="e.g. NIFTY"
                     ).upper().strip()
 
                 c3, c4, c5 = st.columns(3)
@@ -451,86 +354,84 @@ with col_form:
                     strike   = 0
                     opt_type = ""
 
-            # ── Lot size & qty ──
-            lot_size = 1
-            if instrument != "CASH" and symbol:
-                lot_size = get_lot_size(symbol)
+            # Lot size
+            lot_size = get_lot_size(symbol) if (instrument != "CASH" and symbol) else 1
 
-            # ── Action + Lots / Qty ──
+            # Action + Lots/Qty
             c6, c7 = st.columns(2)
             action = c6.selectbox("Action", ["BUY", "SELL"])
 
             if instrument == "CASH":
-                quantity  = c7.number_input("Quantity (shares)", min_value=1, step=1, value=1)
-                lots      = 0
+                quantity = c7.number_input("Quantity", min_value=1, step=1, value=1)
+                lots     = 0
             else:
                 lots     = c7.number_input("Lots", min_value=1, step=1, value=1)
                 quantity = lots * lot_size
 
-            # Show qty calculation pill
+            # Qty pill
             if instrument != "CASH":
                 if lot_size > 1:
                     st.markdown(
-                        f'<div class="qty-pill"><span class="qty-dot"></span>'
-                        f'{quantity:,} shares &nbsp;·&nbsp; {lots} lot{"s" if lots > 1 else ""} × {lot_size}</div>',
+                        f'<div class="qty-pill">◆ {quantity:,} shares &nbsp;·&nbsp; '
+                        f'{lots} lot{"s" if lots>1 else ""} × {lot_size}</div>',
                         unsafe_allow_html=True
                     )
                 else:
                     st.markdown(
-                        f'<div class="warn-box">Lot size not found for <b>{symbol}</b>. '
-                        f'Update instruments above or check symbol spelling.</div>',
+                        f'<div class="warn-box">Lot size for <b>{symbol}</b> not found — '
+                        f'update instruments above.</div>',
                         unsafe_allow_html=True
                     )
 
-            # ── Date / Time ──
+            # Date / Time
             c8, c9 = st.columns(2)
-            today_ist  = now_ist()
-            trade_date = c8.date_input("Trade Date", value=today_ist.date())
-            trade_time = c9.time_input("Trade Time", value=today_ist.time().replace(second=0, microsecond=0))
+            now       = now_ist()
+            trade_date = c8.date_input("Trade Date", value=now.date())
+            trade_time = c9.time_input("Trade Time", value=now.time().replace(second=0, microsecond=0))
 
-            is_backdated = (trade_date < today_ist.date())
+            is_backdated = trade_date < now.date()
             if is_backdated:
                 st.markdown(
-                    '<div class="info-box">↩ Backdated entry — price will not auto-fetch. Enter manually.</div>',
+                    '<div class="info-box">↩ Backdated entry — enter price manually.</div>',
                     unsafe_allow_html=True
                 )
 
-            # ── Price ──
+            # Price
             c10, c11 = st.columns([1.2, 1])
-            price_override = c11.checkbox("Manual price", value=is_backdated)
-            
-            if price_override or instrument == "CASH" or is_backdated:
-                price        = c10.number_input("Price ₹", min_value=0.0, step=0.05, format="%.2f", value=0.0)
-                price_source = "MANUAL"
-            else:
+            manual = c11.checkbox("Manual price", value=True)
+            price  = c10.number_input("Price ₹", min_value=0.0, step=0.05, format="%.2f", value=0.0)
+            price_source = "MANUAL"
+
+            if not manual and not is_backdated and instrument != "CASH":
                 # Try AngelOne LTP
-                fetched_price = fetch_ltp(symbol, exchange, instrument)
-                if fetched_price:
-                    price        = c10.number_input("Price ₹ (LTP)", min_value=0.0, step=0.05, format="%.2f", value=float(fetched_price))
-                    price_source = "ANGELONE_LTP"
-                else:
-                    price        = c10.number_input("Price ₹", min_value=0.0, step=0.05, format="%.2f", value=0.0)
-                    price_source = "MANUAL"
+                try:
+                    from core.angelone import get_ltp
+                    ltp = get_ltp(symbol, exchange, instrument)
+                    if ltp:
+                        price        = ltp
+                        price_source = "ANGELONE_LTP"
+                        st.markdown(
+                            f'<div class="success-box">LTP fetched: ₹{ltp:,.2f}</div>',
+                            unsafe_allow_html=True
+                        )
+                except Exception:
                     st.markdown(
-                        '<div class="warn-box">AngelOne LTP unavailable. Enter price manually.</div>',
+                        '<div class="warn-box">AngelOne unavailable — enter price manually.</div>',
                         unsafe_allow_html=True
                     )
 
-            # ── Notes ──
-            notes = st.text_area("Notes (optional)", height=60, placeholder="Setup, reason, SL level...")
+            notes = st.text_area("Notes", height=56, placeholder="Setup, SL, reason...")
 
-            # ── Submit ──
             submitted = st.form_submit_button("LOG TRADE →")
 
         if submitted:
             if not symbol:
-                st.markdown('<div class="warn-box">⚠️ Symbol is required.</div>', unsafe_allow_html=True)
+                st.markdown('<div class="warn-box">⚠️ Symbol required.</div>', unsafe_allow_html=True)
             elif price <= 0:
                 st.markdown('<div class="warn-box">⚠️ Enter a valid price.</div>', unsafe_allow_html=True)
             else:
-                trade_id = generate_trade_id()
-                row = {
-                    "trade_id":        trade_id,
+                ok = append_trade({
+                    "trade_id":        generate_trade_id(),
                     "timestamp_entry": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
                     "trade_date":      str(trade_date),
                     "trade_time":      str(trade_time),
@@ -550,147 +451,110 @@ with col_form:
                     "notes":           notes,
                     "is_deleted":      "FALSE",
                     "punched_by":      "SELF",
-                }
-                ok = append_trade(row)
+                })
                 if ok:
                     st.markdown(
-                        f'<div class="success-box">✅ Trade logged — {action} {symbol} '
-                        f'{"" + str(lots) + " lots" if instrument != "CASH" else str(int(quantity)) + " shares"} '
+                        f'<div class="success-box">✅ Logged — {action} {symbol} '
+                        f'{"@ " + str(lots) + " lots" if instrument != "CASH" else str(int(quantity)) + " shares"} '
                         f'@ ₹{price:,.2f}</div>',
                         unsafe_allow_html=True
                     )
 
 
-# ═══════════════════════════════════════════════════════
-# RIGHT: OPEN TRADES
-# ═══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════
+# RIGHT — OPEN TRADES
+# ══════════════════════════════════════════════════════
 with col_trades:
     st.markdown('<div class="pb-panel-title">Open Trades</div>', unsafe_allow_html=True)
 
-    # Refresh button
-    rc1, rc2 = st.columns([1, 4])
-    if rc1.button("↻ Refresh"):
+    r1, r2 = st.columns([1, 5])
+    if r1.button("↻ Refresh"):
         read_trades.clear()
         st.rerun()
 
     df = read_trades()
+    today_str = now_ist().strftime("%Y-%m-%d")
 
     if df.empty:
         st.markdown(
-            '<div style="color:#475569; font-size:0.82rem; padding: 2rem 0; text-align:center;">'
+            '<div style="color:#475569;font-size:0.82rem;padding:2rem 0;text-align:center;">'
             'No trades logged yet.</div>',
             unsafe_allow_html=True
         )
     else:
-        # Filter to non-deleted trades only (already done in read_trades)
-        # Sort newest first
         if "timestamp_entry" in df.columns:
             df = df.sort_values("timestamp_entry", ascending=False)
 
-        today_str = now_ist().strftime("%Y-%m-%d")
-
         for _, row in df.iterrows():
-            tid        = str(row.get("trade_id", ""))
-            sym        = str(row.get("symbol", ""))
-            act        = str(row.get("action", ""))
-            instr      = str(row.get("instrument", ""))
-            expiry_val = str(row.get("expiry", ""))
-            strike_val = str(row.get("strike", ""))
-            opt_val    = str(row.get("option_type", ""))
-            lots_val   = str(row.get("lots_qty", ""))
-            qty_val    = str(row.get("quantity", ""))
-            price_val  = row.get("price", 0)
-            strat_val  = str(row.get("strategy", ""))
-            date_val   = str(row.get("trade_date", ""))
+            tid       = str(row.get("trade_id", ""))
+            sym       = str(row.get("symbol", ""))
+            act       = str(row.get("action", ""))
+            instr     = str(row.get("instrument", ""))
+            expiry_v  = str(row.get("expiry", ""))
+            strike_v  = str(row.get("strike", ""))
+            opt_v     = str(row.get("option_type", ""))
+            lots_v    = str(row.get("lots_qty", ""))
+            qty_v     = str(row.get("quantity", ""))
+            price_v   = row.get("price", 0)
+            strat_v   = str(row.get("strategy", ""))
+            date_v    = str(row.get("trade_date", ""))
 
-            # Build descriptor
-            descriptor = sym
-            if expiry_val:
-                descriptor += f" {expiry_val}"
-            if strike_val and strike_val not in ("", "0"):
-                descriptor += f" {strike_val}{opt_val}"
+            desc = sym
+            if expiry_v: desc += f" {expiry_v}"
+            if strike_v and strike_v not in ("", "0"): desc += f" {strike_v}{opt_v}"
 
-            is_new_trade = (date_val == today_str)
-            new_badge    = '<span class="badge-new">NEW</span>' if is_new_trade else ""
-
+            new_badge = '<span class="badge-new">NEW</span>' if date_v == today_str else ""
             try:
-                price_fmt = f"₹{float(price_val):,.2f}"
+                pf = f"₹{float(price_v):,.2f}"
             except Exception:
-                price_fmt = str(price_val)
+                pf = str(price_v)
 
-            qty_info = f"{lots_val} lots · {qty_val} shares" if instr != "CASH" else f"{qty_val} shares"
-
+            qty_info = f"{lots_v} lots · {qty_v} sh" if instr != "CASH" else f"{qty_v} shares"
             is_editing = (st.session_state.edit_trade_id == tid)
 
-            # ── Trade Row ──
-            col_info, col_btns = st.columns([3, 1])
-
-            with col_info:
+            ci, cb2 = st.columns([3, 1])
+            with ci:
                 st.markdown(
-                    f'<div class="trade-symbol">{badge(act)} &nbsp;{descriptor}{new_badge}</div>'
-                    f'<div class="trade-meta">{strat_val} &nbsp;·&nbsp; {qty_info} &nbsp;·&nbsp; {price_fmt}</div>'
-                    f'<div class="trade-meta">{date_val}</div>',
+                    f'<div class="trade-symbol">{badge(act)} &nbsp;{desc}{new_badge}</div>'
+                    f'<div class="trade-meta">{strat_v} · {qty_info} · {pf}</div>'
+                    f'<div class="trade-meta">{date_v}</div>',
                     unsafe_allow_html=True
                 )
-
-            with col_btns:
+            with cb2:
                 b1, b2 = st.columns(2)
-                if b1.button("✏", key=f"edit_{tid}", help="Edit"):
-                    if st.session_state.edit_trade_id == tid:
-                        st.session_state.edit_trade_id = None
-                    else:
-                        st.session_state.edit_trade_id = tid
+                if b1.button("✏", key=f"e_{tid}", help="Edit"):
+                    st.session_state.edit_trade_id = None if is_editing else tid
+                    st.rerun()
+                if b2.button("✕", key=f"d_{tid}", help="Delete"):
+                    soft_delete_trade(tid)
+                    st.session_state.edit_trade_id = None
                     st.rerun()
 
-                if b2.button("✕", key=f"del_{tid}", help="Delete"):
-                    ok = soft_delete_trade(tid)
-                    if ok:
-                        st.session_state.edit_trade_id = None
-                        st.rerun()
-
-            # ── Edit Panel ──
             if is_editing:
                 with st.container():
                     st.markdown('<div class="edit-panel">', unsafe_allow_html=True)
                     ec1, ec2, ec3 = st.columns(3)
-
-                    new_date  = ec1.date_input(
-                        "Trade Date", value=datetime.strptime(date_val, "%Y-%m-%d").date()
-                        if date_val else now_ist().date(),
-                        key=f"edate_{tid}"
-                    )
                     try:
-                        new_price = ec2.number_input(
-                            "Price ₹", min_value=0.0, step=0.05, format="%.2f",
-                            value=float(price_val), key=f"eprice_{tid}"
-                        )
+                        dv = datetime.strptime(date_v, "%Y-%m-%d").date()
                     except Exception:
-                        new_price = ec2.number_input(
-                            "Price ₹", min_value=0.0, step=0.05, format="%.2f",
-                            value=0.0, key=f"eprice_{tid}"
-                        )
-
-                    new_lots = ec3.number_input(
-                        "Lots / Qty", min_value=1, step=1,
-                        value=int(lots_val) if lots_val.isdigit() else 1,
-                        key=f"elots_{tid}"
-                    )
-
-                    save_col, cancel_col = st.columns(2)
-                    if save_col.button("Save", key=f"save_{tid}"):
+                        dv = now_ist().date()
+                    new_date  = ec1.date_input("Date",     value=dv,             key=f"ed_{tid}")
+                    new_price = ec2.number_input("Price ₹", min_value=0.0, step=0.05,
+                                                 format="%.2f", value=float(price_v) if price_v else 0.0,
+                                                 key=f"ep_{tid}")
+                    new_lots  = ec3.number_input("Lots/Qty", min_value=1, step=1,
+                                                 value=int(lots_v) if str(lots_v).isdigit() else 1,
+                                                 key=f"el_{tid}")
+                    s1, s2 = st.columns(2)
+                    if s1.button("Save", key=f"sv_{tid}"):
                         update_trade_field(tid, "trade_date", str(new_date))
                         update_trade_field(tid, "price", new_price)
                         update_trade_field(tid, "lots_qty", new_lots)
                         st.session_state.edit_trade_id = None
                         st.rerun()
-                    if cancel_col.button("Cancel", key=f"cancel_{tid}"):
+                    if s2.button("Cancel", key=f"cx_{tid}"):
                         st.session_state.edit_trade_id = None
                         st.rerun()
-
                     st.markdown('</div>', unsafe_allow_html=True)
 
-            st.markdown("<div style='margin-bottom:2px'></div>", unsafe_allow_html=True)
-
-
-if __name__ == "__main__":
-    pass
+            st.markdown("<div style='margin-bottom:4px'></div>", unsafe_allow_html=True)
