@@ -27,7 +27,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;background:#0a0a0f;color
 .pb-header{display:flex;align-items:baseline;gap:12px;padding:0 0 1.2rem 0;border-bottom:1px solid #1e1e2e;margin-bottom:1.5rem;}
 .pb-logo{font-size:1.1rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#f97316;}
 .pb-sub{font-size:0.75rem;color:#475569;letter-spacing:0.08em;text-transform:uppercase;}
-.section-title{font-size:0.65rem;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#475569;margin-bottom:1rem;padding-bottom:0.5rem;border-bottom:1px solid #1e1e2e;}
+.section-title{font-size:0.7rem;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:#94a3b8;margin-bottom:1rem;padding-bottom:0.6rem;border-bottom:1px solid #1e1e2e;}
 .stSelectbox label,.stNumberInput label,.stTextInput label,.stDateInput label,.stTimeInput label,.stTextArea label,.stCheckbox label{font-size:0.68rem!important;font-weight:500!important;letter-spacing:0.08em!important;text-transform:uppercase!important;color:#64748b!important;}
 .stSelectbox>div>div,.stTextInput>div>div>input,.stNumberInput>div>div>input,.stDateInput>div>div>input{background:#141420!important;border:1px solid #252538!important;border-radius:6px!important;color:#e2e8f0!important;font-size:0.875rem!important;}
 textarea{background:#141420!important;border:1px solid #252538!important;border-radius:6px!important;color:#e2e8f0!important;}
@@ -40,18 +40,18 @@ textarea{background:#141420!important;border:1px solid #252538!important;border-
 .qty-box{background:#0f0f1a;border:1px solid #1e1e2e;border-radius:6px;padding:10px 14px;margin-top:8px;}
 .qty-label{font-size:0.6rem;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px;}
 .qty-value{font-size:1rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
-.stat-box{background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:10px 14px;min-height:80px;}
-.stat-label{font-size:0.58rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:5px;}
-.stat-value{font-size:1.1rem;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1.2;}
-.stat-value-sm{font-size:0.85rem;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1.3;}
-.stat-sub{font-size:0.62rem;color:#475569;margin-top:3px;}
+.stat-box{background:#0f0f1a;border:1px solid #1e1e2e;border-radius:7px;padding:14px 16px;height:90px;display:flex;flex-direction:column;justify-content:space-between;}
+.stat-label{font-size:0.58rem;color:#475569;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:0;}
+.stat-value{font-size:1.1rem;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1.2;margin:0;}
+.stat-value-sm{font-size:0.95rem;font-weight:700;font-family:'JetBrains Mono',monospace;line-height:1.2;margin:0;}
+.stat-sub{font-size:0.6rem;color:#475569;margin-top:0;}
 .trade-symbol{font-size:0.88rem;font-weight:600;color:#e2e8f0;margin-bottom:3px;line-height:1.3;}
 .trade-meta{font-size:0.71rem;color:#475569;font-family:'JetBrains Mono',monospace;line-height:1.5;}
 .edit-panel{background:#0a0a14;border:1px solid #2e2e48;border-radius:8px;padding:1rem 1.2rem;margin:4px 0 10px 0;}
 .warn-box{background:rgba(234,179,8,0.08);border-left:3px solid #eab308;border-radius:0 6px 6px 0;padding:8px 12px;font-size:0.78rem;color:#ca8a04;margin:6px 0;}
 .info-box{background:rgba(59,130,246,0.08);border-left:3px solid #3b82f6;border-radius:0 6px 6px 0;padding:8px 12px;font-size:0.78rem;color:#60a5fa;margin:6px 0;}
 .success-box{background:rgba(34,197,94,0.08);border-left:3px solid #22c55e;border-radius:0 6px 6px 0;padding:8px 12px;font-size:0.78rem;color:#22c55e;margin:6px 0;}
-.divider{border:none;border-top:1px solid #1e1e2e;margin:1rem 0;}
+.divider{border:none;border-top:1px solid #1e1e2e;margin:0.8rem 0;}
 #MainMenu,footer,header{visibility:hidden;}
 .stDeployButton{display:none;}
 </style>
@@ -600,7 +600,12 @@ col_form, col_trades = st.columns([1, 1.4], gap="large")
 # triggers an immediate rerun and lot size updates live.
 # ══════════════════════════════════════════════════════
 with col_form:
-    st.markdown('<div class="section-title">New Trade</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;'
+        'color:#94a3b8;margin-bottom:1rem;padding-bottom:0.6rem;border-bottom:1px solid #1e1e2e;">'
+        '✦ New Trade</div>',
+        unsafe_allow_html=True
+    )
 
     strategies  = get_strategy_list()
     fno_symbols = get_fno_symbols()
@@ -785,13 +790,19 @@ with col_form:
 # RIGHT — OPEN TRADES (grouped by strategy)
 # ══════════════════════════════════════════════════════
 with col_trades:
-    st.markdown('<div class="section-title">Open Trades</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;'
+        'color:#94a3b8;margin-bottom:1rem;padding-bottom:0.6rem;border-bottom:1px solid #1e1e2e;">'
+        '✦ Open Trades</div>',
+        unsafe_allow_html=True
+    )
 
-    rb1, _, rb2 = st.columns([1, 2, 1])
-    if rb1.button("↻ Refresh"):
+    # Refresh left, Clear Data far right aligned with Margin Remaining box
+    _c1, _c2, _c3, _c4 = st.columns([1, 1, 1, 1])
+    if _c1.button("↻ Refresh"):
         read_trades.clear()
         st.rerun()
-    if rb2.button("🗑 Clear Data", help="Marks ALL open trades as deleted. Use to reset test data."):
+    if _c4.button("🗑 Clear Data", help="Marks ALL open trades as deleted. Use to reset test data."):
         st.session_state["confirm_clear"] = True
 
     if st.session_state.get("confirm_clear", False):
@@ -946,8 +957,10 @@ with col_trades:
         m3.markdown(
             f'<div class="stat-box">'
             f'<div class="stat-label">Margin Utilised</div>'
-            f'<div class="stat-value-sm" style="color:{mg_c}">{mg_s}</div>'
-            f'<div style="font-size:0.78rem;font-weight:600;color:{mg_c};margin-top:1px;">{mg_p}</div>'
+            f'<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">'
+            f'<span style="font-size:1.1rem;font-weight:700;font-family:JetBrains Mono,monospace;color:{mg_c};">{mg_s}</span>'
+            f'<span style="font-size:0.82rem;font-weight:600;color:{mg_c};">{mg_p}</span>'
+            f'</div>'
             f'<div class="stat-sub">{"of ₹"+str(int(total_capital//100000))+"L capital" if total_capital>0 else "SPAN estimated"}</div>'
             f'</div>',
             unsafe_allow_html=True
