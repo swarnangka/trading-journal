@@ -17,25 +17,46 @@ IST = pytz.timezone("Asia/Kolkata")
 # ── LOGIN ──────────────────────────────────────────────────────────────────────
 
 @st.cache_resource(ttl=3600)
+@st.cache_resource(ttl=3600)
 def get_angel_obj():
-    """Login to AngelOne. Cached 1 hour. Returns SmartConnect or None."""
+    """
+    Login to AngelOne via direct REST call (avoids SmartConnect getProfile timeout).
+    Returns a simple namespace with jwt_token and api_key. Cached 1 hour.
+    """
     try:
-        from SmartApi import SmartConnect
         cfg     = st.secrets["angelone"]
-        # Strip all whitespace and non-printable chars from api_key
-        api_key = str(cfg["api_key"]).strip().replace("\xa0","").replace("\u00a0","")
-        api_key = "".join(c for c in api_key if c.isprintable() and c != " ")
+        api_key = "".join(c for c in str(cfg["api_key"]).strip() if c.isprintable() and c > " ")
+        client  = str(cfg["client_id"]).strip()
+        pwd     = str(cfg["password"]).strip()
         totp    = pyotp.TOTP(str(cfg["totp_secret"]).strip()).now()
-        obj     = SmartConnect(api_key=api_key)
-        resp    = obj.generateSession(
-            str(cfg["client_id"]).strip(),
-            str(cfg["password"]).strip(),
-            totp
+
+        headers = {
+            "Content-Type":    "application/json",
+            "Accept":          "application/json",
+            "X-UserType":      "USER",
+            "X-SourceID":      "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP":"106.193.147.98",
+            "X-MACAddress":    "AA:BB:CC:DD:EE:FF",
+            "X-PrivateKey":    api_key,
+        }
+        body = {"clientcode": client, "password": pwd, "totp": totp}
+        resp = requests.post(
+            "https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword",
+            json=body, headers=headers, timeout=15
         )
-        if resp and resp.get("status"):
-            return obj
+        data = resp.json()
+        if data.get("status") and data.get("data"):
+            jwt = data["data"].get("jwtToken","")
+            if jwt:
+                # Return simple object with what we need
+                class _AO:
+                    def __init__(self, jwt, key):
+                        self.jwt = jwt
+                        self.api_key = key
+                return _AO(jwt, api_key)
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -138,21 +159,33 @@ def find_token(symbol: str, exchange: str, instrument: str, expiry: str = "", st
 # ── LTP ────────────────────────────────────────────────────────────────────────
 
 def fetch_current_ltp(symbol: str, exchange: str, token: str) -> tuple:
-    """
-    Fetch LTP for a single symbol using token.
-    Returns (price, "LIVE") or (None, "MANUAL").
-    """
-    obj = get_angel_obj()
-    if not obj: return None, "MANUAL"
-    if not token: return None, "MANUAL"
+    """Fetch LTP via direct REST. Returns (price, 'LIVE') or (None, 'MANUAL')."""
+    ao = get_angel_obj()
+    if not ao or not token: return None, "MANUAL"
     try:
-        # Map exchange to AngelOne segment
-        exch_map = {"NSE": "NSE", "BSE": "BSE", "MCX": "MCX", "NFO": "NFO"}
         seg = "NFO" if exchange.upper() in ("NSE","NFO") else exchange.upper()
-        resp = obj.ltpData(seg, symbol, token)
-        if resp and resp.get("status") and resp.get("data"):
-            ltp = float(resp["data"].get("ltp", 0))
-            if ltp > 0: return ltp, "LIVE"
+        headers = {
+            "Content-Type":    "application/json",
+            "Accept":          "application/json",
+            "X-UserType":      "USER",
+            "X-SourceID":      "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP":"106.193.147.98",
+            "X-MACAddress":    "AA:BB:CC:DD:EE:FF",
+            "X-PrivateKey":    ao.api_key,
+            "Authorization":   f"Bearer {ao.jwt}",
+        }
+        resp = requests.post(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/",
+            json={"mode":"LTP","exchangeTokens":{seg:[token]}},
+            headers=headers, timeout=10
+        )
+        data = resp.json()
+        if data.get("status") and data.get("data"):
+            fetched = data["data"].get("fetched",[])
+            if fetched:
+                ltp = float(fetched[0].get("ltp",0))
+                if ltp > 0: return ltp, "LIVE"
     except Exception:
         pass
     return None, "MANUAL"
@@ -167,12 +200,9 @@ def get_symbol_token(symbol: str, exchange: str, instrument: str,
 # ── MARGIN ────────────────────────────────────────────────────────────────────
 
 def fetch_margin_for_positions(positions: list) -> dict:
-    """
-    Fetch SPAN margin for open positions.
-    Returns dict with "_total_required" key.
-    """
-    obj = get_angel_obj()
-    if not obj or not positions: return {}
+    """Fetch SPAN margin via direct REST. Returns dict with _total_required."""
+    ao = get_angel_obj()
+    if not ao or not positions: return {}
     try:
         orders = []
         for pos in positions:
@@ -190,9 +220,24 @@ def fetch_margin_for_positions(positions: list) -> dict:
                 "tradedsquareoff": "0",
             })
         if not orders: return {}
-        resp = obj.getMargin({"orders": orders})
-        if resp and resp.get("status") and resp.get("data"):
-            total = float(resp["data"].get("charges",{}).get("total",0))
+        headers = {
+            "Content-Type":    "application/json",
+            "Accept":          "application/json",
+            "X-UserType":      "USER",
+            "X-SourceID":      "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP":"106.193.147.98",
+            "X-MACAddress":    "AA:BB:CC:DD:EE:FF",
+            "X-PrivateKey":    ao.api_key,
+            "Authorization":   f"Bearer {ao.jwt}",
+        }
+        resp = requests.post(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getMargin",
+            json={"orders": orders}, headers=headers, timeout=10
+        )
+        data = resp.json()
+        if data.get("status") and data.get("data"):
+            total = float(data["data"].get("charges",{}).get("total",0))
             return {"_total_required": total}
     except Exception:
         pass
