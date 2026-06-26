@@ -14,28 +14,28 @@ st.set_page_config(page_title="ParabolicTrends · Dashboard", page_icon="📊", 
 # ── PASSWORD GATE ────────────────────────────────────────────────────────────
 QUOTES = [
     ("A good trend following system will keep you in the market until there is evidence that the trend has changed.", "Richard Dennis"),
-    ("I could trade without knowing the name of the market.", "Richard Dennis"),
-    ("You should expect the unexpected in this business; expect the extreme.", "Richard Dennis"),
-    ("If you have a losing position that is making you uncomfortable, get out.", "Richard Dennis"),
-    ("Trade small because that is when you are as bad as you are ever going to be.", "Richard Dennis"),
     ("The elements of good trading are: cutting losses, cutting losses, and cutting losses.", "Ed Seykota"),
-    ("Win or lose, everybody gets what they want out of the market.", "Ed Seykota"),
-    ("If you can't take a small loss, sooner or later you will take the mother of all losses.", "Ed Seykota"),
     ("It was never my thinking that made the big money for me. It was always my sitting tight!", "Jesse Livermore"),
-    ("There is a time to go long, a time to go short and a time to go fishing.", "Jesse Livermore"),
-    ("The game of speculation is the most uniformly fascinating game in the world. But it is not a game for the stupid.", "Jesse Livermore"),
     ("Let your profits run and cut your losses short.", "Richard Donchian"),
-    ("Buying at the top and selling at the bottom is the only way to catch the big trends.", "Richard Donchian"),
-    ("Be careful buying when the crowd is excessively bullish.", "Richard Donchian"),
     ("If you don't bet, you can't win. If you lose all your chips, you can't bet.", "Larry Hite"),
-    ("Never risk more than 1% of total account equity on any one trade.", "Larry Hite"),
-    ("If you diversify, control your risk, and go with the trend, it just has to work.", "Larry Hite"),
     ("We don't make market predictions. We just ride the bucking bronco.", "Bill Dunn"),
-    ("Volatility is not the enemy. It is the source of our profits.", "Bill Dunn"),
     ("Don't focus on making money; focus on protecting what you have.", "Paul Tudor Jones"),
-    ("If I have positions going against me, I get right out.", "Paul Tudor Jones"),
+    ("I could trade without knowing the name of the market.", "Richard Dennis"),
+    ("Win or lose, everybody gets what they want out of the market.", "Ed Seykota"),
+    ("There is a time to go long, a time to go short and a time to go fishing.", "Jesse Livermore"),
+    ("Never risk more than 1% of total account equity on any one trade.", "Larry Hite"),
+    ("Volatility is not the enemy. It is the source of our profits.", "Bill Dunn"),
     ("Risk control is the most important thing in trading.", "Bruce Kovner"),
+    ("You should expect the unexpected in this business; expect the extreme.", "Richard Dennis"),
+    ("If you can't take a small loss, sooner or later you will take the mother of all losses.", "Ed Seykota"),
+    ("The game of speculation is the most uniformly fascinating game in the world. But it is not a game for the stupid.", "Jesse Livermore"),
+    ("Buying at the top and selling at the bottom is the only way to catch the big trends.", "Richard Donchian"),
+    ("If you diversify, control your risk, and go with the trend, it just has to work.", "Larry Hite"),
+    ("If I have positions going against me, I get right out.", "Paul Tudor Jones"),
     ("Price is the only fact.", "Michael Covel"),
+    ("If you have a losing position that is making you uncomfortable, get out.", "Richard Dennis"),
+    ("Be careful buying when the crowd is excessively bullish.", "Richard Donchian"),
+    ("Trade small because that is when you are as bad as you are ever going to be.", "Richard Dennis"),
     ("Trend following is reacting to the market.", "Michael Covel"),
 ]
 
@@ -85,7 +85,7 @@ html,body,[class*="css"]{{font-family:'Inter',sans-serif;background:#0a0a0f;colo
     align-items:baseline;
     white-space:nowrap;
     font-size:0.72rem;
-    animation:ticker-scroll 120s linear infinite;
+    animation:ticker-scroll 180s linear infinite;
     will-change:transform;
 }}
 @keyframes ticker-scroll{{
@@ -156,7 +156,7 @@ html,body,[class*="css"]{{font-family:'Inter',sans-serif;background:#0a0a0f;colo
 <!-- Header — identical to dashboard -->
 <div class="pb-header">
   <span class="pb-logo">
-    <span style="color:#ffffff;">Parabolic</span><span style="color:#7c6fcd;">Trends</span>
+    <span style="color:#ffffff;">Parabolic</span><span style="color:#7c6fcd;">Trends</span><span style="color:#334155;font-size:0.75rem;font-weight:500;letter-spacing:0.18em;margin-left:10px;text-transform:uppercase;">Dashboard</span>
   </span>
   <a href="https://www.parabolictrends.com" target="_blank"
      style="font-size:0.7rem;color:#7c6fcd;letter-spacing:0.1em;text-transform:uppercase;
@@ -403,8 +403,8 @@ st.markdown(
     '<div class="pb-header" style="display:flex;align-items:center;justify-content:space-between;">'
     '<div style="display:flex;align-items:baseline;gap:12px;">'
     '<span class="pb-logo"><span style="color:#ffffff;">Parabolic</span>'
-    '<span style="color:#7c6fcd;">Trends</span></span>'
-    '<span class="pb-sub">Dashboard</span>'
+    '<span style="color:#7c6fcd;">Trends</span>'
+    '<span style="color:#334155;font-size:0.75rem;font-weight:500;letter-spacing:0.18em;margin-left:10px;text-transform:uppercase;">Dashboard</span></span>'
     '</div>'
     '<a href="https://www.parabolictrends.com" target="_blank" '
     'style="font-size:0.7rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;'
