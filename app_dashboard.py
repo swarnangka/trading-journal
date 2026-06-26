@@ -11,6 +11,49 @@ import requests
 
 st.set_page_config(page_title="ParabolicTrends · Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
+# ── PASSWORD GATE ────────────────────────────────────────────────────────────
+def check_password():
+    """Returns True if correct password entered."""
+    if st.session_state.get("_auth_ok"):
+        return True
+
+    # Minimal centered login UI
+    st.markdown("""
+    <style>
+    .login-wrap{display:flex;flex-direction:column;align-items:center;
+                justify-content:center;min-height:60vh;gap:0;}
+    .login-title{font-size:1.6rem;font-weight:700;margin-bottom:4px;}
+    .login-sub{font-size:0.8rem;color:#475569;margin-bottom:2rem;letter-spacing:0.06em;}
+    </style>
+    <div class="login-wrap">
+      <div class="login-title">
+        <span style="color:#fff;">Parabolic</span><span style="color:#7c6fcd;">Trends</span>
+      </div>
+      <div class="login-sub">DASHBOARD · RESTRICTED ACCESS</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        pwd = st.text_input("Password", type="password", placeholder="Enter password",
+                            label_visibility="collapsed")
+        if st.button("→ Enter", use_container_width=True):
+            correct = str(st.secrets.get("dashboard", {}).get("password", ""))
+            if pwd and pwd == correct:
+                st.session_state["_auth_ok"] = True
+                st.rerun()
+            else:
+                st.markdown(
+                    '<div style="color:#ef4444;font-size:0.78rem;text-align:center;margin-top:8px;">'
+                    'Incorrect password. Try again.</div>',
+                    unsafe_allow_html=True
+                )
+    return False
+
+if not check_password():
+    st.stop()
+
+# ─────────────────────────────────────────────────────────────────────────────
 IST    = pytz.timezone("Asia/Kolkata")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
 TAB_TRADES   = "TRADES"
