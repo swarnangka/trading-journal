@@ -442,10 +442,28 @@ st.markdown('<div class="section-title">✦ Strategy Performance</div>', unsafe_
 
 df_closed = read_closed_trades()
 
-# ── DATE FILTER ───────────────────────────────────────────────────────────────
-fc1, fc2, fc3 = st.columns([1,1,4])
-date_from = fc1.date_input("From", value=date(2024,1,1), label_visibility="visible")
-date_to   = fc2.date_input("To",   value=now_ist().date(), label_visibility="visible")
+# ── FILTERS: strategy dropdown + date range ───────────────────────────────────
+# Get available strategies from closed trades for dropdown
+_avail_strats = []
+if not df_closed.empty and "strategy" in df_closed.columns:
+    _s_ordered = [s for s in STRATEGY_ORDER if s in df_closed["strategy"].unique()]
+    _s_others  = sorted([s for s in df_closed["strategy"].unique() if s not in STRATEGY_ORDER])
+    _avail_strats = _s_ordered + _s_others
+
+fc1, fc2, fc3 = st.columns([1.2, 1, 1])
+# Strategy dropdown — default TREND if available
+_default_idx = 0
+if _avail_strats and "TREND" in _avail_strats:
+    _default_idx = _avail_strats.index("TREND")
+
+selected_strategy = fc1.selectbox(
+    "Strategy",
+    options=_avail_strats if _avail_strats else ["No data yet"],
+    index=_default_idx,
+    key="perf_strategy"
+)
+date_from = fc2.date_input("From", value=date(2024,1,1), label_visibility="visible")
+date_to   = fc3.date_input("To",   value=now_ist().date(), label_visibility="visible")
 
 if df_closed.empty:
     st.markdown('<div style="color:#475569;font-size:0.82rem;padding:1rem 0;">No closed trades yet. Close positions to see performance.</div>', unsafe_allow_html=True)
@@ -483,13 +501,18 @@ else:
     if df_filtered.empty:
         st.markdown('<div style="color:#475569;font-size:0.82rem;">No trades in selected date range.</div>', unsafe_allow_html=True)
     else:
-        all_strats_closed = df_filtered["strategy"].unique().tolist() if "strategy" in df_filtered.columns else []
-        ordered_c = [s for s in STRATEGY_ORDER if s in all_strats_closed]
-        others_c  = sorted([s for s in all_strats_closed if s not in STRATEGY_ORDER])
+        # Only show selected strategy
+        strategies_to_show = [selected_strategy] if selected_strategy and selected_strategy != "No data yet" else []
 
-        for strategy_name in ordered_c + others_c:
+        for strategy_name in strategies_to_show:
             strat_c = df_filtered[df_filtered["strategy"]==strategy_name].copy()
-            if strat_c.empty: continue
+            if strat_c.empty:
+                st.markdown(
+                    f'<div style="color:#475569;font-size:0.82rem;padding:1.5rem 0;">' 
+                    f'No closed trades for <b>{strategy_name}</b> in selected date range.</div>',
+                    unsafe_allow_html=True
+                )
+                continue
 
             # ── STATS ──────────────────────────────────────────────────────
             n_trades   = len(strat_c)
