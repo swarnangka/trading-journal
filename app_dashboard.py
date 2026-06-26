@@ -12,40 +12,259 @@ import requests
 st.set_page_config(page_title="ParabolicTrends · Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
 
 # ── PASSWORD GATE ────────────────────────────────────────────────────────────
+QUOTES = [
+    ("The trend is your friend until the end when it bends.", "Ed Seykota"),
+    ("I just wait until there is money lying in the corner, and all I have to do is go over there and pick it up.", "Jim Rogers"),
+    ("The game of speculation is the most uniformly fascinating game in the world. But it is not a game for the stupid, the mentally lazy, the person of inferior emotional balance.", "Jesse Livermore"),
+    ("Cut losses. Let profits run.", "Ed Seykota"),
+    ("There is only one side of the market and it is not the bull side or the bear side, but the right side.", "Jesse Livermore"),
+    ("Everybody gets what they want from the markets.", "Ed Seykota"),
+    ("The markets are never wrong — opinions often are.", "Jesse Livermore"),
+    ("Win or lose, everybody gets what they want out of the market. Some people seem to like to lose, so they win by losing money.", "Ed Seykota"),
+    ("It takes patience, discipline and courage to follow the trend.", "Dennis Ritchards"),
+    ("I keep a close eye on the big picture — the trend. You have to know what you want before you can get it.", "Dennis Ritchards"),
+    ("Trade with the trend. It's the path of least resistance.", "Dennis Ritchards"),
+    ("The elements of good trading are: cutting losses, cutting losses, and cutting losses.", "Ed Seykota"),
+    ("Markets are never wrong — only opinions are.", "Jesse Livermore"),
+    ("I don't think about losing. I think about making money.", "Paul Tudor Jones"),
+    ("The most important thing is to have a method for staying with your winners and getting rid of your losers.", "Gary Bielfeldt"),
+    ("At the end of the day, the most important thing is how good are you at risk control.", "Paul Tudor Jones"),
+    ("Where you want to be is always in control, never wishing, always trading, and always, first and foremost protecting your butt.", "Paul Tudor Jones"),
+    ("Losers average losers.", "Paul Tudor Jones"),
+    ("The key to trading success is emotional discipline. If intelligence were the key, there would be a lot more people making money trading.", "Victor Sperandeo"),
+    ("The trend is your friend, follow it to the end.", "Michael Covel"),
+    ("I have two basic rules about winning in trading as well as in life: If you don't bet, you can't win. If you lose all your chips, you can't bet.", "Larry Hite"),
+    ("Risk no more than you can afford to lose, and also risk enough so that a win is meaningful.", "Ed Seykota"),
+    ("The biggest risk is not taking a risk.", "Michael Covel"),
+    ("Markets trend only 15 to 20 percent of the time; the rest of the time they move sideways.", "Richard Donchian"),
+    ("Follow the trend lines, not the headlines.", "Bill Miller"),
+    ("In this business if you're good, you're right six times out of ten.", "Peter Lynch"),
+    ("Know what you own, and know why you own it.", "Peter Lynch"),
+    ("The stock market is filled with individuals who know the price of everything, but the value of nothing.", "Philip Fisher"),
+    ("Be fearful when others are greedy, and greedy when others are fearful.", "Warren Buffett"),
+    ("Price is what you pay, value is what you get.", "Warren Buffett"),
+    ("The individual investor should act consistently as an investor and not as a speculator.", "Benjamin Graham"),
+    ("The four most dangerous words in investing are: this time it's different.", "Sir John Templeton"),
+    ("Successful investing is about managing risk, not avoiding it.", "Benjamin Graham"),
+    ("Good investing is boring.", "George Soros"),
+    ("It's not whether you're right or wrong, but how much money you make when you're right and how much you lose when you're wrong.", "George Soros"),
+    ("Trade the trend, not your opinion.", "Anonymous"),
+    ("He who lives by the crystal ball soon learns to eat ground glass.", "Edgar Fiedler"),
+    ("The secret to being successful from a trading perspective is to have an indefatigable and an undying and unquenchable thirst for information and knowledge.", "Paul Tudor Jones"),
+    ("Compound interest is the eighth wonder of the world.", "Albert Einstein"),
+    ("October. This is one of the peculiarly dangerous months to speculate in stocks. The others are July, January, September, April, November, May, March, June, December, August, and February.", "Mark Twain"),
+]
+
 def check_password():
-    """Returns True if correct password entered."""
+    """Returns True if correct password entered, shows motivational screen if not."""
     if st.session_state.get("_auth_ok"):
         return True
 
-    # Minimal centered login UI
-    st.markdown("""
+    # Build scrolling ticker text — quotes joined by separator
+    ticker_items = "".join(
+        f'<span class="qt-item">'
+        f'<span class="qt-text">"{q}"</span>'
+        f'<span class="qt-attr">— {a}</span>'
+        f'</span>'
+        f'<span class="qt-sep">✦</span>'
+        for q, a in QUOTES
+    )
+    # Duplicate for seamless loop
+    ticker_html = ticker_items * 2
+
+    st.markdown(f"""
     <style>
-    .login-wrap{display:flex;flex-direction:column;align-items:center;
-                justify-content:center;min-height:60vh;gap:0;}
-    .login-title{font-size:1.6rem;font-weight:700;margin-bottom:4px;}
-    .login-sub{font-size:0.8rem;color:#475569;margin-bottom:2rem;letter-spacing:0.06em;}
+    html, body, [class*="css"], .stApp {{
+        background: #05050d !important;
+        color: #e2e8f0;
+        font-family: 'Inter', sans-serif;
+    }}
+    .block-container {{ padding: 0 !important; max-width: 100% !important; }}
+
+    /* ── Full screen layout ── */
+    .login-screen {{
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: #05050d;
+        position: relative;
+        overflow: hidden;
+    }}
+
+    /* ── Background grid ── */
+    .login-screen::before {{
+        content: '';
+        position: absolute;
+        inset: 0;
+        background-image:
+            linear-gradient(rgba(124,111,205,0.04) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(124,111,205,0.04) 1px, transparent 1px);
+        background-size: 60px 60px;
+        pointer-events: none;
+    }}
+
+    /* ── Logo ── */
+    .login-logo {{
+        font-size: 2.6rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.3rem;
+        z-index: 2;
+    }}
+    .login-tagline {{
+        font-size: 0.72rem;
+        color: #334155;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        margin-bottom: 3.5rem;
+        z-index: 2;
+    }}
+
+    /* ── Ticker tape wrapper ── */
+    .ticker-outer {{
+        width: 100%;
+        overflow: hidden;
+        background: linear-gradient(135deg, #0d0d1f 0%, #0a0a18 100%);
+        border-top: 1px solid rgba(124,111,205,0.2);
+        border-bottom: 1px solid rgba(124,111,205,0.2);
+        padding: 28px 0;
+        margin-bottom: 4rem;
+        position: relative;
+        z-index: 2;
+    }}
+    .ticker-outer::before,
+    .ticker-outer::after {{
+        content: '';
+        position: absolute;
+        top: 0; bottom: 0;
+        width: 120px;
+        z-index: 3;
+    }}
+    .ticker-outer::before {{
+        left: 0;
+        background: linear-gradient(90deg, #05050d, transparent);
+    }}
+    .ticker-outer::after {{
+        right: 0;
+        background: linear-gradient(-90deg, #05050d, transparent);
+    }}
+    .ticker-track {{
+        display: flex;
+        align-items: center;
+        white-space: nowrap;
+        animation: scroll-left 220s linear infinite;
+        will-change: transform;
+    }}
+    @keyframes scroll-left {{
+        0%   {{ transform: translateX(0); }}
+        100% {{ transform: translateX(-50%); }}
+    }}
+    .qt-item {{
+        display: inline-flex;
+        align-items: baseline;
+        gap: 14px;
+        margin-right: 0;
+    }}
+    .qt-text {{
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #c8c0f0;
+        font-style: italic;
+        letter-spacing: 0.01em;
+    }}
+    .qt-attr {{
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: #f97316;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }}
+    .qt-sep {{
+        font-size: 1.2rem;
+        color: rgba(124,111,205,0.4);
+        margin: 0 48px;
+    }}
+
+    /* ── Password box ── */
+    .pw-wrap {{
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        width: 320px;
+    }}
+    .pw-label {{
+        font-size: 0.65rem;
+        color: #334155;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        margin-bottom: -4px;
+    }}
+
+    /* Streamlit widget overrides for dark inputs */
+    .stTextInput > div > div > input {{
+        background: #0f0f1a !important;
+        border: 1px solid #252538 !important;
+        border-radius: 6px !important;
+        color: #e2e8f0 !important;
+        font-size: 0.9rem !important;
+        text-align: center !important;
+        letter-spacing: 0.2em !important;
+        padding: 10px 16px !important;
+    }}
+    .stTextInput > div > div > input:focus {{
+        border-color: #7c6fcd !important;
+        box-shadow: 0 0 0 2px rgba(124,111,205,0.15) !important;
+    }}
+    .stButton > button {{
+        background: linear-gradient(135deg, #7c6fcd, #6357b8) !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-size: 0.8rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.12em !important;
+        padding: 10px 32px !important;
+        width: 100% !important;
+        cursor: pointer !important;
+        transition: opacity 0.15s !important;
+    }}
+    .stButton > button:hover {{
+        opacity: 0.88 !important;
+    }}
     </style>
-    <div class="login-wrap">
-      <div class="login-title">
-        <span style="color:#fff;">Parabolic</span><span style="color:#7c6fcd;">Trends</span>
+
+    <div class="login-screen">
+      <div class="login-logo">
+        <span style="color:#ffffff;">Parabolic</span><span style="color:#7c6fcd;">Trends</span>
       </div>
-      <div class="login-sub">DASHBOARD · RESTRICTED ACCESS</div>
+      <div class="login-tagline">Trend · Follow · Profit</div>
+
+      <div class="ticker-outer">
+        <div class="ticker-track">{ticker_html}</div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([1, 1.2, 1])
-    with col2:
-        pwd = st.text_input("Password", type="password", placeholder="Enter password",
-                            label_visibility="collapsed")
-        if st.button("→ Enter", use_container_width=True):
+    # Centered password form
+    _, mid, _ = st.columns([1, 1, 1])
+    with mid:
+        st.markdown('<div class="pw-label">Enter Access Password</div>', unsafe_allow_html=True)
+        pwd = st.text_input("pw", type="password", placeholder="••••••••",
+                            label_visibility="collapsed", key="pw_input")
+        if st.button("ENTER DASHBOARD →", use_container_width=True):
             correct = str(st.secrets.get("dashboard", {}).get("password", ""))
             if pwd and pwd == correct:
                 st.session_state["_auth_ok"] = True
                 st.rerun()
             else:
                 st.markdown(
-                    '<div style="color:#ef4444;font-size:0.78rem;text-align:center;margin-top:8px;">'
-                    'Incorrect password. Try again.</div>',
+                    '<div style="color:#ef4444;font-size:0.75rem;text-align:center;'
+                    'margin-top:6px;letter-spacing:0.05em;">Incorrect password</div>',
                     unsafe_allow_html=True
                 )
     return False
