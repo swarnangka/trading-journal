@@ -85,7 +85,7 @@ html,body,[class*="css"]{{font-family:'Inter',sans-serif;background:#0a0a0f;colo
     align-items:baseline;
     white-space:nowrap;
     font-size:0.72rem;
-    animation:ticker-scroll 45s linear infinite;
+    animation:ticker-scroll 120s linear infinite;
     will-change:transform;
 }}
 @keyframes ticker-scroll{{
@@ -175,23 +175,24 @@ html,body,[class*="css"]{{font-family:'Inter',sans-serif;background:#0a0a0f;colo
 </div>
 """, unsafe_allow_html=True)
 
-    # Center the password input + login button
-    _, mid, _ = st.columns([1.5, 1, 1.5])
+    # Push down to vertical center with spacer
+    st.markdown("<div style='height:28vh'></div>", unsafe_allow_html=True)
+
+    _, mid, _ = st.columns([1.6, 1, 1.6])
     with mid:
         pwd = st.text_input("pw", type="password", placeholder="Password",
                             label_visibility="collapsed", key="pw_input")
-    _, btn_col, _ = st.columns([1.5, 1, 1.5])
-    with btn_col:
-        if st.button("Login", use_container_width=True):
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        login_clicked = st.button("Login", use_container_width=True)
+        if login_clicked:
             correct = str(st.secrets.get("dashboard", {}).get("password", ""))
             if pwd and pwd == correct:
                 st.session_state["_auth_ok"] = True
                 st.rerun()
             else:
-                _, err_col, _ = st.columns([1.5, 1, 1.5])
-                err_col.markdown(
+                st.markdown(
                     '<div style="color:#ef4444;font-size:0.72rem;text-align:center;'
-                    'margin-top:4px;">Incorrect password</div>',
+                    'margin-top:6px;letter-spacing:0.05em;">Incorrect password</div>',
                     unsafe_allow_html=True
                 )
     return False
