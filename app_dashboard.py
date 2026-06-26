@@ -598,7 +598,7 @@ else:
                     fig.add_hline(y=0, line_dash="dot", line_color="#2e2e48", line_width=1)
                     fig.update_layout(
                         height=220, margin=dict(l=0,r=0,t=8,b=0),
-                        paper_bgcolor="transparent", plot_bgcolor="transparent",
+                        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                         font=dict(family="JetBrains Mono", size=10, color="#475569"),
                         xaxis=dict(showgrid=False, zeroline=False, showline=False,
                                    tickformat="%d %b", tickfont=dict(size=9,color="#475569")),
