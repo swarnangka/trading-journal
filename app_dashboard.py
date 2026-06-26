@@ -17,11 +17,11 @@ QUOTES = [
     ("I could trade without knowing the name of the market.", "Richard Dennis"),
     ("You should expect the unexpected in this business; expect the extreme.", "Richard Dennis"),
     ("If you have a losing position that is making you uncomfortable, get out.", "Richard Dennis"),
-    ("Trade small because that's when you are as bad as you are ever going to be.", "Richard Dennis"),
+    ("Trade small because that is when you are as bad as you are ever going to be.", "Richard Dennis"),
     ("The elements of good trading are: cutting losses, cutting losses, and cutting losses.", "Ed Seykota"),
     ("Win or lose, everybody gets what they want out of the market.", "Ed Seykota"),
     ("If you can't take a small loss, sooner or later you will take the mother of all losses.", "Ed Seykota"),
-    ("It was never my thinking that made the big money for me. It was always my sitting tight.", "Jesse Livermore"),
+    ("It was never my thinking that made the big money for me. It was always my sitting tight!", "Jesse Livermore"),
     ("There is a time to go long, a time to go short and a time to go fishing.", "Jesse Livermore"),
     ("The game of speculation is the most uniformly fascinating game in the world. But it is not a game for the stupid.", "Jesse Livermore"),
     ("Let your profits run and cut your losses short.", "Richard Donchian"),
@@ -43,218 +43,155 @@ def check_password():
     if st.session_state.get("_auth_ok"):
         return True
 
-    # Build ticker items — each quote + attribution
-    ticker_items = "".join(
-        f'<span class="qt-item">'
-        f'<span class="qt-quote">&#8220;{q}&#8221;</span>'
-        f'<span class="qt-dash">&mdash;</span>'
-        f'<span class="qt-name">{a}</span>'
+    # Build ticker — quotes joined with separator, tripled for seamless loop
+    ticker_content = "".join(
+        f'<span style="display:inline-flex;align-items:baseline;gap:8px;">'
+        f'<span style="font-style:italic;color:#94a3b8;">&#8220;{q}&#8221;</span>'
+        f'<span style="color:#f97316;font-size:0.65rem;font-weight:700;'
+        f'letter-spacing:0.1em;text-transform:uppercase;white-space:nowrap;">&mdash; {a}</span>'
         f'</span>'
-        f'<span class="qt-dot">&#x25C6;</span>'
+        f'<span style="color:#1e1e2e;margin:0 40px;font-size:0.7rem;">&#9679;</span>'
         for q, a in QUOTES
-    )
-    ticker_html = ticker_items * 3   # triple for seamless infinite scroll
+    ) * 3
 
     st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+html,body,[class*="css"]{{font-family:'Inter',sans-serif;background:#0a0a0f;color:#e2e8f0;}}
+.stApp{{background:#0a0a0f;}}
+.block-container{{padding:1.5rem 2rem 3rem 2rem;max-width:1400px;}}
+#MainMenu,footer,header,.stDeployButton{{visibility:hidden;display:none;}}
 
-html, body, [class*="css"], .stApp {{
-    background: #080810 !important;
-    font-family: 'Inter', sans-serif !important;
-}}
-.block-container {{
-    padding: 0 !important;
-    max-width: 100% !important;
-}}
-/* Hide streamlit chrome */
-#MainMenu, footer, header, .stDeployButton {{ visibility: hidden; display: none; }}
+/* exact pb-header from dashboard */
+.pb-header{{display:flex;align-items:center;justify-content:space-between;padding:0 0 1.2rem 0;border-bottom:1px solid #1e1e2e;margin-bottom:0;}}
+.pb-logo{{font-size:1.1rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;}}
 
-/* ── Full-screen wrapper ── */
-.ls-wrap {{
-    position: fixed;
-    inset: 0;
-    background: #080810;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    z-index: 0;
+/* ticker strip — sits right after the header rule like a sub-header */
+.ticker-strip{{
+    width:100%;
+    overflow:hidden;
+    border-bottom:1px solid #1e1e2e;
+    padding:8px 0;
+    margin-bottom:0;
+    position:relative;
 }}
-
-/* ── Subtle radial glow behind logo ── */
-.ls-glow {{
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -60%);
-    width: 600px;
-    height: 300px;
-    background: radial-gradient(ellipse at center,
-        rgba(124,111,205,0.12) 0%,
-        rgba(124,111,205,0.04) 40%,
-        transparent 70%);
-    pointer-events: none;
+.ticker-strip::before,.ticker-strip::after{{
+    content:'';position:absolute;top:0;bottom:0;width:80px;z-index:2;pointer-events:none;
+}}
+.ticker-strip::before{{left:0;background:linear-gradient(to right,#0a0a0f,transparent);}}
+.ticker-strip::after{{right:0;background:linear-gradient(to left,#0a0a0f,transparent);}}
+.ticker-inner{{
+    display:inline-flex;
+    align-items:baseline;
+    white-space:nowrap;
+    font-size:0.72rem;
+    animation:ticker-scroll 45s linear infinite;
+    will-change:transform;
+}}
+@keyframes ticker-scroll{{
+    0%{{transform:translateX(0);}}
+    100%{{transform:translateX(-33.333%);}}
 }}
 
-/* ── Logo ── */
-.ls-logo {{
-    font-size: 3.2rem;
-    font-weight: 800;
-    letter-spacing: -0.01em;
-    margin-bottom: 2.4rem;
-    position: relative;
-    z-index: 1;
-    line-height: 1;
+/* centered login card */
+.login-card{{
+    position:fixed;
+    top:50%;left:50%;
+    transform:translate(-50%,-45%);
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:0;
+    z-index:0;
+    pointer-events:none;
+}}
+.login-hint{{
+    font-size:0.6rem;
+    color:#334155;
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    margin-bottom:10px;
+    pointer-events:none;
 }}
 
-/* ── Ticker band ── */
-.ticker-band {{
-    width: 100%;
-    overflow: hidden;
-    background: #0d0d1e;
-    border-top: 1px solid rgba(124,111,205,0.18);
-    border-bottom: 1px solid rgba(124,111,205,0.18);
-    padding: 22px 0;
-    margin-bottom: 2.6rem;
-    position: relative;
-    z-index: 1;
+/* input + button styling to match dashboard buttons */
+.stTextInput>label{{display:none!important;}}
+.stTextInput>div>div>input{{
+    background:#0f0f1a!important;
+    border:1px solid #252538!important;
+    border-radius:6px!important;
+    color:#e2e8f0!important;
+    font-family:'JetBrains Mono',monospace!important;
+    font-size:0.9rem!important;
+    text-align:center!important;
+    letter-spacing:0.2em!important;
+    padding:10px 20px!important;
+    transition:border-color 0.15s!important;
+    min-width:220px!important;
 }}
-/* fade edges */
-.ticker-band::before,
-.ticker-band::after {{
-    content: '';
-    position: absolute;
-    top: 0; bottom: 0;
-    width: 160px;
-    z-index: 2;
-    pointer-events: none;
+.stTextInput>div>div>input:focus{{
+    border-color:#7c6fcd!important;
+    box-shadow:0 0 0 2px rgba(124,111,205,0.12)!important;
+    outline:none!important;
 }}
-.ticker-band::before {{
-    left: 0;
-    background: linear-gradient(to right, #080810 0%, transparent 100%);
+.stButton>button{{
+    background:transparent!important;
+    border:1px solid #252538!important;
+    border-radius:6px!important;
+    color:#94a3b8!important;
+    font-size:0.75rem!important;
+    font-weight:500!important;
+    padding:0.4rem 1.4rem!important;
+    letter-spacing:0.04em!important;
+    white-space:nowrap!important;
+    transition:all 0.15s!important;
 }}
-.ticker-band::after {{
-    right: 0;
-    background: linear-gradient(to left, #080810 0%, transparent 100%);
-}}
-.ticker-track {{
-    display: inline-flex;
-    align-items: baseline;
-    white-space: nowrap;
-    animation: marquee 90s linear infinite;
-    will-change: transform;
-}}
-.ticker-track:hover {{
-    animation-play-state: paused;
-}}
-@keyframes marquee {{
-    0%   {{ transform: translateX(0); }}
-    100% {{ transform: translateX(-33.333%); }}
-}}
-.qt-item {{
-    display: inline-flex;
-    align-items: baseline;
-    gap: 10px;
-    padding: 0 2px;
-}}
-.qt-quote {{
-    font-size: 1.35rem;
-    font-weight: 500;
-    color: #d4cff5;
-    font-style: italic;
-    letter-spacing: 0.005em;
-}}
-.qt-dash {{
-    color: rgba(124,111,205,0.5);
-    font-size: 1rem;
-}}
-.qt-name {{
-    font-size: 0.78rem;
-    font-weight: 700;
-    color: #f97316;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    white-space: nowrap;
-}}
-.qt-dot {{
-    font-size: 0.6rem;
-    color: rgba(124,111,205,0.35);
-    margin: 0 52px;
-    vertical-align: middle;
-}}
-
-/* ── Streamlit input override ── */
-.stTextInput > label {{ display: none !important; }}
-.stTextInput > div > div > input {{
-    background: #0f0f1e !important;
-    border: 1px solid #1e1e38 !important;
-    border-radius: 8px !important;
-    color: #e2e8f0 !important;
-    font-family: 'JetBrains Mono', monospace !important;
-    font-size: 1rem !important;
-    text-align: center !important;
-    letter-spacing: 0.25em !important;
-    padding: 12px 20px !important;
-    transition: border-color 0.2s !important;
-}}
-.stTextInput > div > div > input:focus {{
-    border-color: #7c6fcd !important;
-    box-shadow: 0 0 0 3px rgba(124,111,205,0.12) !important;
-    outline: none !important;
-}}
-.stButton > button {{
-    background: #7c6fcd !important;
-    color: #fff !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-size: 0.75rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.18em !important;
-    text-transform: uppercase !important;
-    padding: 12px 0 !important;
-    width: 100% !important;
-    transition: background 0.2s, transform 0.1s !important;
-    cursor: pointer !important;
-}}
-.stButton > button:hover {{
-    background: #6a5ec0 !important;
-    transform: translateY(-1px) !important;
-}}
-.stButton > button:active {{
-    transform: translateY(0) !important;
+.stButton>button:hover{{
+    border-color:#f97316!important;
+    color:#f97316!important;
+    background:rgba(249,115,22,0.06)!important;
 }}
 </style>
 
-<div class="ls-wrap">
-  <div class="ls-glow"></div>
-
-  <div class="ls-logo">
+<!-- Header — identical to dashboard -->
+<div class="pb-header">
+  <span class="pb-logo">
     <span style="color:#ffffff;">Parabolic</span><span style="color:#7c6fcd;">Trends</span>
-  </div>
+  </span>
+  <a href="https://www.parabolictrends.com" target="_blank"
+     style="font-size:0.7rem;color:#7c6fcd;letter-spacing:0.1em;text-transform:uppercase;
+            text-decoration:none;border:1px solid rgba(124,111,205,0.4);border-radius:5px;
+            padding:4px 12px;font-weight:600;background:rgba(124,111,205,0.08);">↗ parabolictrends.com</a>
+</div>
 
-  <div class="ticker-band">
-    <div class="ticker-track">{ticker_html}</div>
-  </div>
+<!-- Ticker strip immediately below header -->
+<div class="ticker-strip">
+  <div class="ticker-inner">{ticker_content}</div>
+</div>
+
+<!-- Centered hint text — Streamlit input + button render below this -->
+<div class="login-card">
+  <div class="login-hint">Enter password to access</div>
 </div>
 """, unsafe_allow_html=True)
 
-    # Password input — sits over the fixed div via Streamlit columns
-    _, col, _ = st.columns([1.4, 1, 1.4])
-    with col:
-        pwd = st.text_input("pw", type="password", placeholder="· · · · · · · ·",
+    # Center the password input + login button
+    _, mid, _ = st.columns([1.5, 1, 1.5])
+    with mid:
+        pwd = st.text_input("pw", type="password", placeholder="Password",
                             label_visibility="collapsed", key="pw_input")
-        entered = st.button("ENTER  →", use_container_width=True)
-        if entered:
+    _, btn_col, _ = st.columns([1.5, 1, 1.5])
+    with btn_col:
+        if st.button("Login", use_container_width=True):
             correct = str(st.secrets.get("dashboard", {}).get("password", ""))
             if pwd and pwd == correct:
                 st.session_state["_auth_ok"] = True
                 st.rerun()
             else:
-                st.markdown(
-                    '<div style="text-align:center;color:#ef4444;font-size:0.72rem;'
-                    'letter-spacing:0.08em;margin-top:8px;">INCORRECT PASSWORD</div>',
+                _, err_col, _ = st.columns([1.5, 1, 1.5])
+                err_col.markdown(
+                    '<div style="color:#ef4444;font-size:0.72rem;text-align:center;'
+                    'margin-top:4px;">Incorrect password</div>',
                     unsafe_allow_html=True
                 )
     return False
