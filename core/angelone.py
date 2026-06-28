@@ -92,8 +92,8 @@ def find_token(symbol: str, exchange: str, instrument: str, expiry: str = "", st
     Handles CASH/equity stocks via NSE equity segment.
     """
     try:
-        # ── CASH / EQUITY stocks ──
-        if instrument.upper() == "CASH":
+        # ── CASH / EQUITY / ETF stocks ──
+        if instrument.upper() in ("CASH", "ETF"):
             ao = get_angel_obj()
             if not ao: return "", ""
             # Try symbol + -EQ suffix first (NSE equity format)
@@ -178,8 +178,8 @@ def fetch_current_ltp(symbol: str, exchange: str, token: str, instrument_hint: s
     ao = get_angel_obj()
     if not ao or not token: return None, "MANUAL"
     try:
-        # CASH stocks use NSE segment, F&O uses NFO
-        if instrument_hint.upper() == "CASH":
+        # CASH/ETF stocks use NSE segment, F&O uses NFO
+        if instrument_hint.upper() in ("CASH", "ETF"):
             seg = "NSE"
         elif exchange.upper() in ("NSE","NFO"):
             seg = "NFO"
