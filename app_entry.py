@@ -9,7 +9,7 @@ import pytz
 from datetime import datetime, date, timedelta
 from google.oauth2.service_account import Credentials
 
-st.set_page_config(page_title="ParabolicTrends · Entry", page_icon="⚡", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="ParabolicTrends · Entry", page_icon="⚡", layout="centered", initial_sidebar_state="collapsed")
 
 IST    = pytz.timezone("Asia/Kolkata")
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
@@ -54,6 +54,60 @@ textarea{background:#141420!important;border:1px solid #252538!important;border-
 .divider{border:none;border-top:1px solid #1e1e2e;margin:0.8rem 0;}
 #MainMenu,footer,header{visibility:hidden;}
 .stDeployButton{display:none;}
+/* ── MOBILE RESPONSIVE ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Reduce padding on mobile */
+  .block-container{padding:0.8rem 0.8rem 2rem 0.8rem!important;}
+
+  /* Header — stack logo and link */
+  .pb-header{flex-wrap:wrap;gap:8px;}
+
+  /* Stat boxes — 2x2 grid on mobile */
+  .stat-box{height:auto!important;min-height:70px;padding:10px 12px;}
+  .stat-value{font-size:0.95rem!important;}
+  .stat-value-sm{font-size:0.85rem!important;}
+  .stat-label{font-size:0.55rem!important;}
+  .stat-sub{font-size:0.58rem!important;}
+
+  /* Trade rows — full width, compact */
+  .trade-symbol{font-size:0.82rem!important;}
+  .trade-meta{font-size:0.68rem!important;line-height:1.4!important;}
+
+  /* Buttons — full width on mobile */
+  .stButton>button{font-size:0.7rem!important;padding:0.35rem 0.6rem!important;}
+
+  /* Form inputs — full width */
+  .stSelectbox>div>div,
+  .stTextInput>div>div>input,
+  .stNumberInput>div>div>input{font-size:0.82rem!important;}
+
+  /* LOG TRADE button — big and easy to tap */
+  .stForm [data-testid="stFormSubmitButton"]>button{
+    font-size:0.9rem!important;
+    padding:0.7rem 1.5rem!important;
+    min-height:48px!important;
+  }
+
+  /* Checkbox — easier to tap */
+  .stCheckbox{min-height:44px;}
+
+  /* Section titles */
+  .section-title{font-size:0.65rem!important;margin-bottom:0.7rem!important;}
+
+  /* Edit panel */
+  .edit-panel{padding:0.7rem 0.8rem!important;}
+
+  /* Qty boxes */
+  .qty-box{padding:8px 10px!important;}
+  .qty-value{font-size:0.9rem!important;}
+}
+
+@media (max-width: 480px) {
+  /* Extra small phones */
+  .block-container{padding:0.5rem 0.5rem 2rem 0.5rem!important;}
+  .stat-value{font-size:0.85rem!important;}
+  .trade-meta{font-size:0.65rem!important;}
+}
 </style>
 """, unsafe_allow_html=True)
 

@@ -9,7 +9,7 @@ from datetime import datetime, date, timedelta
 from google.oauth2.service_account import Credentials
 import requests
 
-st.set_page_config(page_title="ParabolicTrends · Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="ParabolicTrends · Dashboard", page_icon="📊", layout="centered", initial_sidebar_state="collapsed")
 
 # ── PASSWORD GATE ────────────────────────────────────────────────────────────
 QUOTES = [
@@ -241,6 +241,32 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;background:#0a0a0f;color
 .divider{border:none;border-top:1px solid #1e1e2e;margin:0.8rem 0;}
 #MainMenu,footer,header{visibility:hidden;}
 .stDeployButton{display:none;}
+
+/* ── MOBILE RESPONSIVE ──────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .block-container{padding:0.8rem 0.8rem 2rem 0.8rem!important;}
+  .pb-header{flex-wrap:wrap;gap:6px;}
+  .stat-box{height:auto!important;min-height:68px;padding:10px 12px!important;}
+  .stat-value{font-size:0.9rem!important;}
+  .stat-label{font-size:0.52rem!important;}
+  .stat-sub{font-size:0.55rem!important;}
+  .strat-badge{font-size:0.68rem!important;padding:4px 10px!important;}
+  .trade-symbol{font-size:0.82rem!important;}
+  .trade-meta{font-size:0.66rem!important;line-height:1.4!important;}
+  .card{padding:1rem!important;margin-bottom:0.8rem!important;}
+  .card-header{flex-wrap:wrap;gap:6px;}
+  .metric-row{grid-template-columns:repeat(2,1fr)!important;gap:6px!important;}
+  .metric-value{font-size:0.82rem!important;}
+  .metric-label{font-size:0.55rem!important;}
+  .top-trade-sym{font-size:0.75rem!important;}
+  .section-title{font-size:0.65rem!important;}
+  .stButton>button{font-size:0.7rem!important;padding:0.35rem 0.7rem!important;}
+}
+@media (max-width: 480px) {
+  .block-container{padding:0.4rem 0.4rem 2rem 0.4rem!important;}
+  .stat-value{font-size:0.82rem!important;}
+  .metric-row{grid-template-columns:repeat(2,1fr)!important;}
+}
 </style>
 """, unsafe_allow_html=True)
 
