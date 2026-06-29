@@ -410,12 +410,9 @@ st.markdown(
     '<span style="color:#334155;font-size:0.75rem;font-weight:500;letter-spacing:0.18em;margin-left:10px;text-transform:uppercase;">Dashboard</span></span>'
     '</div>'
     '<a href="https://www.parabolictrends.com" target="_blank" '
-    'style="font-size:0.7rem;color:#475569;letter-spacing:0.1em;text-transform:uppercase;'
-    'text-decoration:none;border:1px solid #1e1e2e;border-radius:5px;padding:4px 12px;'
-    'transition:color 0.2s,border-color 0.2s;font-weight:500;" '
-    'onmouseover="this.style.color='#7c6fcd';this.style.borderColor='#7c6fcd'" '
-    'onmouseout="this.style.color='#475569';this.style.borderColor='#1e1e2e'">'
-    '↗ parabolictrends.com</a>'
+    'style="font-size:0.7rem;color:#7c6fcd;letter-spacing:0.1em;text-transform:uppercase;'
+    'text-decoration:none;border:1px solid rgba(124,111,205,0.4);border-radius:5px;'
+    'padding:4px 12px;font-weight:600;background:rgba(124,111,205,0.08);">↗ parabolictrends.com</a>'
     '</div>',
     unsafe_allow_html=True
 )
