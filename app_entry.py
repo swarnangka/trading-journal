@@ -392,11 +392,18 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
             if opt_type and d.get("option_type","").upper() != opt_type.upper(): continue
             if strike and strike not in ("","0") and d.get("strike","") not in ("","0"):
                 if str(d.get("strike","")).strip() != str(strike).strip(): continue
-            try:
-                open_lots = float(d.get("lots_qty",0) or 0)
-            except: open_lots = 0
-            if open_lots <= 0: continue
-            matching.append((i, d, open_lots))
+            instr_d = d.get("instrument","").upper()
+            if instr_d in ("CASH","ETF"):
+                # CASH/ETF: use quantity as the unit (lots_qty stored as 0)
+                try:    open_units = float(d.get("quantity",0) or 0)
+                except: open_units = 0
+                if open_units <= 0: continue
+                matching.append((i, d, open_units))
+            else:
+                try:    open_lots = float(d.get("lots_qty",0) or 0)
+                except: open_lots = 0
+                if open_lots <= 0: continue
+                matching.append((i, d, open_lots))
 
         if not matching:
             return False, f"No open {orig_action} position found for {symbol} {expiry}. Check symbol/expiry match."
@@ -414,7 +421,9 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
             if remaining <= 0: break
 
             lots_this = min(remaining, open_lots)
-            qty_this  = lots_this * lot_size
+            # CASH/ETF: lot_size=1, qty=lots_this (shares)
+            instr_t   = trade.get("instrument","FUT").upper()
+            qty_this  = lots_this * lot_size if instr_t not in ("CASH","ETF") else lots_this
             entry_px  = float(trade.get("price",0) or 0)
             pnl       = (close_price - entry_px)*qty_this if orig_action=="BUY" else (entry_px - close_price)*qty_this
             total_pnl += pnl
@@ -503,11 +512,16 @@ def process_closure_trade(close_action: str, symbol: str, exchange: str,
                 # Fully closed — mark deleted
                 if di: ws.update_cell(row_idx, di, "TRUE")
             else:
-                # Partially closed — reduce qty
-                rem_lots = open_lots - lots_this
-                rem_qty  = rem_lots * lot_size
-                if lq: ws.update_cell(row_idx, lq, str(rem_lots))
-                if qq: ws.update_cell(row_idx, qq, str(int(rem_qty)))
+                # Partially closed — reduce
+                if instr_t in ("CASH","ETF"):
+                    # CASH/ETF: reduce quantity directly
+                    rem_qty = open_lots - lots_this
+                    if qq: ws.update_cell(row_idx, qq, str(int(rem_qty)))
+                else:
+                    rem_lots = open_lots - lots_this
+                    rem_qty  = rem_lots * lot_size
+                    if lq: ws.update_cell(row_idx, lq, str(rem_lots))
+                    if qq: ws.update_cell(row_idx, qq, str(int(rem_qty)))
 
             remaining -= lots_this
 
@@ -917,8 +931,14 @@ with col_form:
                 st.markdown('<div class="info-box">↩ Backdated entry — enter price manually.</div>', unsafe_allow_html=True)
 
             fp1, fp2 = st.columns([1.5,1])
-            manual   = fp2.checkbox("Manual price", value=True)
-            price    = fp1.number_input("Price ₹", min_value=0.0, step=0.05, format="%.2f", value=0.0)
+            # Use session_state to persist checkbox across reruns
+            if "manual_price_toggle" not in st.session_state:
+                st.session_state["manual_price_toggle"] = True
+            manual = fp2.checkbox("Manual price",
+                                  value=st.session_state["manual_price_toggle"],
+                                  key="manual_price_cb")
+            st.session_state["manual_price_toggle"] = manual
+            price  = fp1.number_input("Price ₹", min_value=0.0, step=0.05, format="%.2f", value=0.0)
             price_source = "MANUAL"
 
             if not manual and not is_back and instrument not in ("CASH","ETF"):
@@ -963,7 +983,7 @@ with col_form:
                     expiry        = expiry,
                     strike        = str(strike) if strike else "",
                     opt_type      = opt_type,
-                    lots_to_close = int(lots) if instrument != "CASH" else 0,
+                    lots_to_close = int(lots) if instrument not in ("CASH","ETF") else int(quantity),
                     close_price   = price,
                     close_date    = str(trade_date),
                     strategy      = strategy,
