@@ -919,6 +919,17 @@ with col_form:
 
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
+        # ── MANUAL PRICE TOGGLE — outside form so it persists ──
+        _mp_col1, _mp_col2 = st.columns([3, 1])
+        _mp_col2.checkbox(
+            "Manual price",
+            value=st.session_state.get("manual_price_toggle", True),
+            key="manual_price_cb",
+            on_change=lambda: st.session_state.update(
+                {"manual_price_toggle": st.session_state["manual_price_cb"]}
+            )
+        )
+
         # ── FORM — date/price/notes/submit only ──
         with st.form("entry_form", clear_on_submit=True):
             now = now_ist()
@@ -931,36 +942,29 @@ with col_form:
                 st.markdown('<div class="info-box">↩ Backdated entry — enter price manually.</div>', unsafe_allow_html=True)
 
             fp1, fp2 = st.columns([1.5,1])
-            # Use session_state to persist checkbox across reruns
-            if "manual_price_toggle" not in st.session_state:
-                st.session_state["manual_price_toggle"] = True
-            manual = fp2.checkbox("Manual price",
-                                  value=st.session_state["manual_price_toggle"],
-                                  key="manual_price_cb")
-            st.session_state["manual_price_toggle"] = manual
-            price  = fp1.number_input("Price ₹", min_value=0.0, step=0.05, format="%.2f", value=0.0)
+            manual = st.session_state.get("manual_price_toggle", True)
+            price  = st.number_input("Price ₹", min_value=0.0, step=0.05, format="%.2f", value=0.0)
             price_source = "MANUAL"
 
-            if not manual and not is_back and instrument not in ("CASH","ETF"):
+            if not manual and not is_back:
                 try:
                     from core.angelone import get_angel_obj, get_symbol_token, fetch_current_ltp
                     obj = get_angel_obj()
                     if obj:
                         token = get_symbol_token(symbol, exchange, instrument)
                         if token:
-                            ltp, _ = fetch_current_ltp(symbol, exchange, token)
+                            ltp, _ = fetch_current_ltp(symbol, exchange, token, instrument)
                             if ltp and ltp > 0:
                                 price = ltp; price_source = "ANGELONE_LTP"
                                 st.markdown(f'<div class="success-box">LTP fetched: {fmt_px(ltp)}</div>', unsafe_allow_html=True)
                             else:
-                                st.markdown('<div class="warn-box">No price returned — enter manually.</div>', unsafe_allow_html=True)
+                                st.markdown('<div class="warn-box">No price — enter manually.</div>', unsafe_allow_html=True)
                         else:
-                            st.markdown(f'<div class="warn-box">Symbol token not found for {symbol}.</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="warn-box">Token not found for {symbol}.</div>', unsafe_allow_html=True)
                     else:
                         st.markdown('<div class="warn-box">AngelOne login failed — enter manually.</div>', unsafe_allow_html=True)
                 except Exception as ex:
                     st.markdown(f'<div class="warn-box">AngelOne error: {ex}</div>', unsafe_allow_html=True)
-
             notes     = st.text_area("Notes", height=56, placeholder="Setup, SL, reason...")
 
             # ── CLOSURE TRADE TOGGLE ──
